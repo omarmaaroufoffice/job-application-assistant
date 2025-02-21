@@ -306,13 +306,118 @@ class FloatingWidget(QMainWindow):
         self.current_action_index = 0
     
     def on_yes_clicked(self):
-        """Handle Yes button click"""
+        """Handle Yes button click with verification"""
         if self.current_actions and self.current_action_index < len(self.current_actions):
             action = self.current_actions[self.current_action_index]
+            
             # Execute the action
             self.assistant.execute_single_action(action)
-            self.current_action_index += 1
-            self._show_next_action()
+            
+            # Take verification screenshot after action
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            verification_path = os.path.join(
+                self.assistant.screenshots_dir,
+                f"verification_{timestamp}.png"
+            )
+            
+            # Wait a moment for any UI updates
+            time.sleep(0.5)
+            
+            # Capture verification screenshot
+            screenshot = pyautogui.screenshot()
+            screenshot.save(verification_path)
+            
+            # Convert to PIL Image for Gemini AI
+            verification_img = Image.open(verification_path)
+            
+            # Create verification prompt
+            verification_prompt = f"""
+            VERIFY ACTION EXECUTION:
+            Action Type: {action[0].upper()}
+            Target Coordinate: {action[-2]}
+            Description: {action[3]}
+            
+            Please analyze the screenshot and verify:
+            1. Was the action executed at the correct location?
+            2. Is there visual feedback confirming the action (e.g., text entered, button clicked)?
+            3. Should we retry the action?
+            
+            Respond in this format:
+            ###VERIFICATION###
+            Success: [YES/NO]
+            Issue: [Description if NO, "None" if YES]
+            Retry: [YES/NO]
+            Adjustment: [New coordinates if needed]
+            ###END###
+            """
+            
+            # Generate verification using Gemini AI
+            try:
+                verification_response = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=[verification_prompt, verification_img]
+                )
+                
+                if verification_response and verification_response.text:
+                    # Parse verification response
+                    verification_text = verification_response.text
+                    success_match = re.search(r'Success: (YES|NO)', verification_text)
+                    retry_match = re.search(r'Retry: (YES|NO)', verification_text)
+                    
+                    if success_match and retry_match:
+                        success = success_match.group(1) == "YES"
+                        retry = retry_match.group(1) == "YES"
+                        
+                        if success:
+                            self._update_status("Action verified successful")
+                            # Move to next action (which will hide confirmation since we're only showing one at a time)
+                            self.current_action_index += 1
+                            self._hide_confirmation()
+                            
+                            # Analyze next action if available
+                            if len(self.assistant.current_actions) > 1:
+                                next_actions = self.assistant.current_actions[1:]
+                                self._update_actions([next_actions[0]])  # Show next action
+                                self._show_confirmation([next_actions[0]])
+                        elif retry:
+                            self._update_status("Retrying action...")
+                            # Extract new coordinates if provided
+                            adjustment_match = re.search(r'Adjustment: ([A-Z]{2}\d+(?:\.\d+)?)', verification_text)
+                            if adjustment_match:
+                                new_coord = adjustment_match.group(1)
+                                # Update action with new coordinates
+                                adjusted_action = list(action)
+                                adjusted_action[-2] = new_coord
+                                self.current_actions = [tuple(adjusted_action)]
+                                self._update_actions(self.current_actions)
+                            # Retry the same action
+                            self.on_yes_clicked()
+                        else:
+                            self._update_status("Action failed, skipping...")
+                            self.current_action_index += 1
+                            self._hide_confirmation()
+                    else:
+                        self._update_status("Could not verify action")
+                        self.current_action_index += 1
+                        self._hide_confirmation()
+                else:
+                    self._update_status("No verification response")
+                    self.current_action_index += 1
+                    self._hide_confirmation()
+                    
+            except Exception as e:
+                print(f"Error during verification: {e}")
+                self._update_status("Verification failed")
+                self.current_action_index += 1
+                self._hide_confirmation()
+            
+            # Clean up verification screenshot
+            try:
+                os.remove(verification_path)
+            except:
+                pass
+        else:
+            self._hide_confirmation()
     
     def on_no_clicked(self):
         """Handle No button click"""
@@ -328,9 +433,11 @@ class FloatingWidget(QMainWindow):
         try:
             actions = self.assistant.parse_ai_response(ai_response)
             if actions:
-                self._update_actions(actions)
-                self._update_status("Analysis complete")
-                self._show_confirmation(actions)
+                # Only take the first action
+                first_action = actions[0]
+                self._update_actions([first_action])
+                self._update_status("Analyzing single action")
+                self._show_confirmation([first_action])
             else:
                 self._update_actions([])
                 self._update_status("No actionable elements found")
@@ -352,6 +459,7 @@ class JobApplicationAssistant:
         
         # Initialize variables
         self.running = True
+        self.current_actions = []  # Add this line to track current actions
         
         # Load user profile
         self.load_user_profile()
@@ -654,7 +762,7 @@ class JobApplicationAssistant:
             screen_width_pixels = int(screen.geometry().width() * scale_factor)
             screen_height_pixels = int(screen.geometry().height() * scale_factor)
             
-            # Create the gridded overlay and merge it with the screenshot
+            # Create the gridded overlay
             gridded_img = self._create_grid_overlay(img, screen_width_pixels, screen_height_pixels)
             
             # Save the gridded image first (for debugging)
@@ -1001,7 +1109,7 @@ class JobApplicationAssistant:
         """Execute a single action with precise coordinates and verified real clicks"""
         try:
             x, y = action[1], action[2]
-            coord = action[-1]
+            coord = action[-2]
             
             # Log the action with precise coordinates
             print(f"Executing {action[0]} at {coord} ({x}, {y})")
@@ -1067,6 +1175,9 @@ class JobApplicationAssistant:
             # Additional wait between actions
             time.sleep(0.5)
             
+            # Return True to indicate success
+            return True
+            
         except Exception as e:
             print(f"Error executing action at {coord}: {e}")
             self.widget.update_status(f"Error executing action: {e}")
@@ -1080,8 +1191,11 @@ class JobApplicationAssistant:
                     time.sleep(0.5)  # Longer wait
                     mouse_controller.position = (x, y)
                     time.sleep(0.3)
+                    return True  # Return True if recovery succeeds
             except Exception as recovery_error:
                 print(f"Recovery attempt failed: {recovery_error}")
+            
+            return False  # Return False if all attempts fail
 
     def analyze_job_description(self, job_text: str) -> Dict[str, Any]:
         """Analyze job description to match with user profile"""
@@ -1189,6 +1303,10 @@ class JobApplicationAssistant:
                     is_satisfied = False
                     previous_actions = []
                     
+                    # Store only the first action for processing
+                    self.current_actions = [current_actions[0]]
+                    current_actions = self.current_actions
+                    
                     while (verification_iteration < max_iterations and 
                            (verification_iteration < min_iterations or not is_satisfied)):
                         verification_iteration += 1
@@ -1219,6 +1337,20 @@ class JobApplicationAssistant:
                             # Convert to PIL for Gemini
                             current_annotated_pil = Image.fromarray(cv2.cvtColor(current_annotated_img, cv2.COLOR_BGR2RGB))
                             
+                            # Take a new screenshot to compare with
+                            verification_screenshot = pyautogui.screenshot()
+                            verification_img = cv2.cvtColor(np.array(verification_screenshot), cv2.COLOR_RGB2BGR)
+                            
+                            # Create verification image with grid overlay
+                            verification_gridded = self._create_grid_overlay(verification_img, screen_width_pixels, screen_height_pixels)
+                            
+                            # Save verification image
+                            verification_path = os.path.join(
+                                self.screenshots_dir,
+                                f"verification_{timestamp}_iter{verification_iteration}.png"
+                            )
+                            cv2.imwrite(verification_path, verification_gridded)
+                            
                             # Create verification prompt
                             verification_prompt = self._create_verification_prompt(
                                 verification_iteration,
@@ -1228,10 +1360,14 @@ class JobApplicationAssistant:
                                 previous_actions[-1] if len(previous_actions) > 1 else None
                             )
                             
-                            # Generate verification using Gemini AI
+                            # Generate verification using Gemini AI - use both annotated and verification images
                             verification_response = client.models.generate_content(
                                 model="gemini-2.0-flash",
-                                contents=[verification_prompt, current_annotated_pil]
+                                contents=[
+                                    verification_prompt,
+                                    current_annotated_pil,  # Show the annotated plan
+                                    Image.fromarray(cv2.cvtColor(verification_gridded, cv2.COLOR_BGR2RGB))  # Show current state
+                                ]
                             )
                             
                             if verification_response and verification_response.text:
@@ -1249,6 +1385,11 @@ class JobApplicationAssistant:
                                     current_actions
                                 )
                                 
+                                # Update current_actions with verified coordinates
+                                if current_actions:
+                                    self.current_actions = [current_actions[0]]
+                                    current_actions = self.current_actions
+                                
                                 # Check if AI is satisfied
                                 is_satisfied = "SATISFIED" in verification_response.text.upper()
                                 if is_satisfied and verification_iteration >= min_iterations:
@@ -1261,14 +1402,15 @@ class JobApplicationAssistant:
                             print(f"Error during iteration {verification_iteration}: {str(e)}")
                             break
                     
-                    # Update UI with final verified actions
-                    if current_actions:
-                        self.widget.signals.update_actions_signal.emit(current_actions)
-                        self.widget.signals.show_confirmation_signal.emit(current_actions)
+                    # Update UI with final verified action
+                    if self.current_actions:
+                        self.widget.signals.update_actions_signal.emit(self.current_actions)
+                        self.widget.signals.show_confirmation_signal.emit(self.current_actions)
                     else:
                         self.widget.update_status("No valid actions after verification")
                         self.widget.signals.update_actions_signal.emit([])
                 else:
+                    self.current_actions = []
                     self.widget.update_status("No actionable elements found")
                     self.widget.signals.update_actions_signal.emit([])
             else:
@@ -1425,30 +1567,44 @@ class JobApplicationAssistant:
         return f"""
         COORDINATE VERIFICATION TASK (Iteration {iteration}/{max_iterations})
 
-        You are looking at an annotated screenshot that shows the current form with:
-        - Red circles and crosshairs: Click/type target positions
-        - White boxes with red text: Coordinate labels and descriptions
-        - Grid overlay: Shows the coordinate system
+        You are looking at TWO images:
+        1. ANNOTATED PLAN (First Image):
+           - Shows the proposed click points with red circles and crosshairs
+           - Includes white boxes with coordinate labels and descriptions
+           - Has the grid overlay for reference
 
-        Please verify each coordinate ONE BY ONE with extreme precision:
+        2. CURRENT STATE (Second Image):
+           - Shows the actual form's current state
+           - Has the grid overlay for reference
+           - Use this to verify element positions and alignment
+
+        Please verify each coordinate ONE BY ONE with extreme precision by comparing both images:
 
         Coordinates to verify:
         {coordinate_list}
 
         For EACH coordinate, analyze:
         1. VERTICAL ALIGNMENT:
+           - Compare the click point in the annotated plan with the actual element position
            - Is the click point EXACTLY aligned with the target element?
            - Should it be moved up or down? By how much?
            - Check if text is centered within input fields
            - For radio buttons/checkboxes, ensure click is on the control
 
         2. HORIZONTAL ALIGNMENT:
+           - Compare the click point in the annotated plan with the actual element position
            - Is the click point EXACTLY on the target element?
            - Should it be moved left or right? By how much?
            - Check alignment with text fields and buttons
            - Verify click points hit interactive elements
 
-        3. ANNOTATION PLACEMENT:
+        3. ELEMENT STATE VERIFICATION:
+           - Check if the element is still in the same position
+           - Verify the element hasn't changed state or moved
+           - Ensure no overlapping elements have appeared
+           - Confirm the element is still interactive
+
+        4. ANNOTATION PLACEMENT:
            - Are labels clearly visible and not overlapping?
            - Do they point to the correct elements?
            - Is text readable and properly positioned?
@@ -1458,6 +1614,7 @@ class JobApplicationAssistant:
         ###COORD_START###
         Coordinate: [coord]
         Current Position: [description of current position]
+        Element State: [UNCHANGED/CHANGED/HIDDEN]
         Vertical Alignment: [CORRECT/TOO HIGH/TOO LOW] by [amount] pixels
         Horizontal Alignment: [CORRECT/TOO LEFT/TOO RIGHT] by [amount] pixels
         Annotation: [GOOD/NEEDS ADJUSTMENT]
@@ -1475,7 +1632,7 @@ class JobApplicationAssistant:
 
         CRITICAL REQUIREMENTS:
         - You MUST check each coordinate individually
-        - You MUST look at the actual positions in the image
+        - You MUST compare both the annotated plan and current state
         - You MUST verify both click points and annotations
         - You MUST provide specific adjustment amounts if needed
         - You MUST complete at least {min_iterations} iterations
@@ -1486,79 +1643,103 @@ class JobApplicationAssistant:
         - Don't assume previous coordinates were correct
         - Check both the click point and its annotation
         - Consider the actual form element positions
+        - Compare the annotated plan with the current state
         """
 
-    def _process_verification_response(self, verification_text: str, current_actions: List[tuple]) -> List[tuple]:
-        """Process the verification response and update actions"""
-        adjusted_actions = []
-        
-        # Extract individual coordinate analyses
-        coord_analyses = re.findall(
+    def _process_verification_response(self, verification_response: str, current_actions: List[tuple]) -> List[tuple]:
+        """Process the verification response and update coordinates if needed"""
+        if not verification_response or not current_actions:
+            return current_actions
+
+        # Extract coordinate analysis sections
+        coord_sections = re.finditer(
             r'###COORD_START###(.*?)###COORD_END###',
-            verification_text,
+            verification_response,
             re.DOTALL
         )
-        
-        # Process each coordinate analysis
-        for analysis in coord_analyses:
-            try:
-                # Extract coordinate being analyzed
-                coord_match = re.search(r'Coordinate: ([A-Z]{2}\d+(?:\.\d+)?)', analysis)
-                if not coord_match:
-                    continue
-                coord = coord_match.group(1)
-                
-                # Find corresponding action
-                current_action = None
-                for action in current_actions:
-                    if action[-2] == coord:  # Grid coordinate is second to last element
-                        current_action = action
-                        break
-                
-                if not current_action:
-                    continue
-                
-                # Check if adjustment is needed
-                if 'Recommended Action: ADJUST' in analysis:
-                    # Extract new coordinate if provided
-                    new_coord_match = re.search(r'New Coordinate.*?: ([A-Z]{2}\d+(?:\.\d+)?)', analysis)
+
+        updated_actions = []
+        for action in current_actions:
+            action_updated = False
+            coord = action[-2]  # Get the coordinate from the action tuple
+
+            # Find matching coordinate section
+            for section in coord_sections:
+                section_text = section.group(1)
+                if f"Coordinate: {coord}" in section_text:
+                    # Check element state first
+                    state_match = re.search(
+                        r'Element State: (UNCHANGED|CHANGED|HIDDEN)',
+                        section_text
+                    )
+                    if state_match and state_match.group(1) in ['CHANGED', 'HIDDEN']:
+                        print(f"Element state changed or hidden for {coord}, forcing readjustment")
+                        # Force readjustment by setting alignment to incorrect
+                        action_updated = True
+                        continue
+
+                    # Parse vertical alignment
+                    vertical_match = re.search(
+                        r'Vertical Alignment: (TOO HIGH|TOO LOW|CORRECT)(?:\s+by\s+(\d+)\s+pixels)?',
+                        section_text
+                    )
+                    if vertical_match:
+                        alignment, pixels = vertical_match.groups()
+                        if alignment != "CORRECT" and pixels:
+                            # Calculate new y-coordinate
+                            y_adjustment = int(pixels)
+                            if alignment == "TOO HIGH":
+                                y_adjustment = y_adjustment  # Move down
+                            else:  # TOO LOW
+                                y_adjustment = -y_adjustment  # Move up
+                            
+                            # Update the y-coordinate in the action tuple
+                            action = list(action)
+                            action[2] = action[2] + y_adjustment
+                            action = tuple(action)
+                            action_updated = True
+                            print(f"Adjusted y-coordinate for {coord} by {y_adjustment} pixels")
+
+                    # Parse horizontal alignment
+                    horizontal_match = re.search(
+                        r'Horizontal Alignment: (TOO LEFT|TOO RIGHT|CORRECT)(?:\s+by\s+(\d+)\s+pixels)?',
+                        section_text
+                    )
+                    if horizontal_match:
+                        alignment, pixels = horizontal_match.groups()
+                        if alignment != "CORRECT" and pixels:
+                            # Calculate new x-coordinate
+                            x_adjustment = int(pixels)
+                            if alignment == "TOO LEFT":
+                                x_adjustment = x_adjustment  # Move right
+                            else:  # TOO RIGHT
+                                x_adjustment = -x_adjustment  # Move left
+                            
+                            # Update the x-coordinate in the action tuple
+                            action = list(action)
+                            action[1] = action[1] + x_adjustment
+                            action = tuple(action)
+                            action_updated = True
+                            print(f"Adjusted x-coordinate for {coord} by {x_adjustment} pixels")
+
+                    # Check for new coordinate recommendation
+                    new_coord_match = re.search(r'New Coordinate.*?:\s*([A-Z]{2}\d+\.\d+)', section_text)
                     if new_coord_match:
                         new_coord = new_coord_match.group(1)
-                        # Create adjusted action with new coordinate
-                        adjusted_action = list(current_action)
-                        adjusted_action[-2] = new_coord  # Update grid coordinate
-                        # Recalculate x,y positions for new coordinate
-                        # (This will be done in next parse_ai_response call)
-                        adjusted_actions.append(tuple(adjusted_action))
-                        print(f"Adjusting {coord} to {new_coord}")
-                    else:
-                        # Keep original if no new coordinate provided
-                        adjusted_actions.append(current_action)
-                        print(f"No new coordinate provided for {coord}, keeping original")
-                elif 'Recommended Action: KEEP' in analysis:
-                    # Keep the action unchanged
-                    adjusted_actions.append(current_action)
-                    print(f"Keeping {coord} unchanged")
-                # Note: REMOVE actions are simply not added to adjusted_actions
-                
-            except Exception as e:
-                print(f"Error processing coordinate analysis: {e}")
-                # Keep original action if there's an error
-                if current_action:
-                    adjusted_actions.append(current_action)
-        
-        # Extract summary
-        summary_match = re.search(
-            r'###SUMMARY###(.*?)###END###',
-            verification_text,
-            re.DOTALL
-        )
-        if summary_match:
-            summary = summary_match.group(1)
-            print("\nVerification Summary:")
-            print(summary)
-        
-        return adjusted_actions
+                        # Update the coordinate in the action tuple
+                        action = list(action)
+                        action[-2] = new_coord
+                        action = tuple(action)
+                        action_updated = True
+                        print(f"Updated coordinate from {coord} to {new_coord}")
+
+                    break  # Found and processed the matching section
+
+            if action_updated:
+                print(f"Updated action: {action}")
+            updated_actions.append(action)
+
+        return updated_actions
 
     def on_analyze_job(self):
         """Handle job analysis hotkey"""
