@@ -658,80 +658,6 @@ class JobApplicationAssistant:
         
         return gridded_path, timestamp
 
-    def capture_zoomed_screenshot(self, x, y, width, height, timestamp):
-        """Capture a zoomed screenshot of an area of interest"""
-        # Calculate zoom area (make it 3x3 cells around the point of interest)
-        zoom_width = width * 3
-        zoom_height = height * 3
-        
-        # Calculate top-left corner of zoom area
-        zoom_x = max(0, x - zoom_width)
-        zoom_y = max(0, y - zoom_height)
-        
-        # Take screenshot
-        screenshot = pyautogui.screenshot(region=(zoom_x, zoom_y, zoom_width * 2, zoom_height * 2))
-        
-        # Convert to numpy array for OpenCV
-        img = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
-        
-        # Create zoomed grid overlay
-        height, width = img.shape[:2]
-        
-        # Calculate cell dimensions for zoomed grid (10x10 in the zoomed area)
-        cell_width = width // 10
-        cell_height = height // 10
-        
-        # Create overlay
-        overlay = img.copy()
-        
-        # Define colors (BGR format)
-        GRID_COLOR = (0, 165, 255)  # Bright orange
-        
-        # Draw detailed grid
-        for i in range(11):
-            x = i * cell_width
-            y = i * cell_height
-            cv2.line(overlay, (x, 0), (x, height), GRID_COLOR, 1)
-            cv2.line(overlay, (0, y), (width, y), GRID_COLOR, 1)
-            
-        # Add cell labels and center dots
-        for row in range(10):
-            for col in range(10):
-                # Calculate cell center
-                center_x = col * cell_width + cell_width // 2
-                center_y = row * cell_height + cell_height // 2
-                
-                # Draw center dot
-                cv2.circle(overlay, (center_x, center_y), 4, GRID_COLOR, -1)
-                
-                # Add coordinate label
-                label = f"{col},{row}"
-                cv2.putText(overlay, label,
-                          (center_x - 20, center_y - 10),
-                          cv2.FONT_HERSHEY_SIMPLEX,
-                          0.5,
-                          (255, 255, 255),
-                          4)
-                cv2.putText(overlay, label,
-                          (center_x - 20, center_y - 10),
-                          cv2.FONT_HERSHEY_SIMPLEX,
-                          0.5,
-                          GRID_COLOR,
-                          1)
-        
-        # Blend overlay with original image
-        alpha = 0.4
-        cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, overlay)
-        
-        # Save zoomed screenshot
-        zoomed_path = os.path.join(
-            self.screenshots_dir,
-            f"zoomed_screenshot_{timestamp}_{x}_{y}.png"
-        )
-        cv2.imwrite(zoomed_path, overlay)
-        
-        return zoomed_path
-
     def analyze_application_form(self, image_path):
         """Analyze the job application form using Gemini AI with dense grid reference"""
         try:
@@ -760,108 +686,94 @@ class JobApplicationAssistant:
             )
             cv2.imwrite(gridded_path, gridded_img)
             
+            # Now read back the saved image to ensure we're using exactly what we saved
+            gridded_img = cv2.imread(gridded_path)
+            
             # Convert to PIL Image for Gemini AI
             gridded_pil = Image.fromarray(cv2.cvtColor(gridded_img, cv2.COLOR_BGR2RGB))
             
-            # First prompt to identify areas of interest
-            initial_prompt = """
-            Look at this screenshot and identify areas that contain interactive elements or form fields.
-            For each area of interest, provide the grid coordinates (e.g., AA1, BB2) where the element is located.
-            Only list areas where you can clearly see form elements, buttons, or input fields.
-            
-            Format your response as:
-            ###AREAS_START###
-            [
-                {
-                    "area": "Brief description",
-                    "coord": "Grid coordinate (e.g., AA1)",
-                    "type": "button/input/dropdown"
-                }
-            ]
-            ###AREAS_END###
-            """
-            
-            # Get initial analysis
-            initial_response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=[initial_prompt, gridded_pil]
-            )
-            
-            # Parse areas of interest
-            areas = []
-            if initial_response and initial_response.text:
-                areas_match = re.search(r'###AREAS_START###\s*(.*?)\s*###AREAS_END###', 
-                                      initial_response.text, re.DOTALL)
-                if areas_match:
-                    areas = json.loads(areas_match.group(1))
-            
-            # Take zoomed screenshots of each area
-            zoomed_screenshots = []
-            cell_width = screen_width_pixels // 40
-            cell_height = screen_height_pixels // 40
-            
-            for area in areas:
-                coord = area['coord']
-                # Parse coordinate
-                match = re.match(r'([A-Z]{2})(\d+)', coord)
-                if match:
-                    col_letters = match.group(1)
-                    row_num = int(match.group(2))
-                    
-                    # Calculate column index
-                    first_letter = ord(col_letters[0]) - ord('A')
-                    second_letter = ord(col_letters[1]) - ord('A')
-                    col_index = (first_letter * 26) + second_letter
-                    
-                    # Calculate pixel coordinates
-                    x = col_index * cell_width
-                    y = (row_num - 1) * cell_height
-                    
-                    # Capture zoomed screenshot
-                    zoomed_path = self.capture_zoomed_screenshot(x, y, cell_width, cell_height, timestamp)
-                    zoomed_screenshots.append({
-                        'path': zoomed_path,
-                        'area': area
-                    })
-            
-            # Now analyze each zoomed screenshot for precise coordinates
-            detailed_prompt = f"""
+            prompt = f"""
             CRITICAL COORDINATE INSTRUCTIONS:
-            You are looking at a zoomed screenshot with a detailed grid overlay.
-            The grid is 10x10 within the zoomed area.
-            Use the exact coordinate numbers shown on the grid (e.g., "5,7").
-            
+            You are looking at a screenshot with a green grid overlay. You MUST:
+            1. ONLY use coordinates where you can see actual green dots in the grid
+            2. Look for the closest green dot to each UI element
+            3. Use the exact sub-grid numbers shown in green (00-99)
+            4. Never make up or interpolate coordinates - if you can't see a green dot near the element, use the nearest visible one
+            5. Double-check that your chosen coordinate has both:
+               - A visible green dot
+               - A readable sub-grid number nearby
+
+            Grid System Reference:
+            - Main Grid: A1-J10 (marked with large green labels)
+            - Sub-grid: Each main cell has numbered points (shown in small green numbers)
+            - Format: <main_cell>.<sub_position>
+              Example: If you see main cell "A1" and sub-grid point "45", use "A1.45"
+
+            COORDINATE SELECTION RULES:
+            1. For each element, find the EXACT green dot closest to it
+            2. Look at the nearest sub-grid number (small green numbers)
+            3. Combine the main cell label with that exact sub-grid number
+            4. Do NOT guess or interpolate positions - use only visible dots and numbers
+
             Look for these elements:
-            {json.dumps(areas, indent=2)}
-            
+            1. Interactive Elements:
+               - Buttons (Apply, Submit, Next, etc.)
+               - Checkboxes and radio buttons
+               - Text input fields
+               - Dropdown menus
+               - Navigation elements
+
+            2. Form Fields:
+               - Required skills questions
+               - Experience questions
+               - Education verification
+               - Contact information fields
+
+            3. Match with my profile:
+            {json.dumps(self.user_profile, indent=2)}
+
             RESPONSE FORMAT:
+            1. Start with "###GRID_ACTIONS_START###"
+            2. JSON array of actions, each with:
+               - element_type: Type of element
+               - grid_coord: ONLY use coordinates you can see in the grid
+               - description: What this element is
+               - recommended_action: Format as "TYPE <coord> \"<text>\"" or "CLICK <coord>"
+            3. End with "###GRID_ACTIONS_END###"
+
+            Example:
             ###GRID_ACTIONS_START###
             [
               {{
-                "element_type": "Type of element",
-                "grid_coord": "Original coordinate + sub-coordinate (e.g., AA1.57)",
-                "description": "What this element is",
-                "recommended_action": "TYPE/CLICK action"
+                "element_type": "Text input",
+                "grid_coord": "A1.44",  // Only if you see the "44" sub-grid number near a green dot in cell A1
+                "description": "Name field",
+                "recommended_action": "TYPE A1.44 \"John Doe\": Enter full name"
               }}
             ]
             ###GRID_ACTIONS_END###
+
+            Current application context:
+            {json.dumps(self.current_application, indent=2)}
+
+            FINAL VERIFICATION:
+            Before providing coordinates, verify that:
+            1. Each coordinate corresponds to a visible green dot
+            2. You can see the sub-grid number clearly
+            3. The dot is the closest one to the UI element
+            4. You are not guessing or interpolating positions
             """
             
-            # Analyze each zoomed screenshot
-            all_responses = []
-            for screenshot in zoomed_screenshots:
-                zoomed_img = Image.open(screenshot['path'])
-                response = client.models.generate_content(
-                    model="gemini-2.0-flash",
-                    contents=[detailed_prompt, zoomed_img]
-                )
-                if response and response.text:
-                    all_responses.append(response.text)
+            # Generate content using Gemini AI with the exact saved and reloaded image
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[prompt, gridded_pil]
+            )
             
-            # Combine all responses
-            combined_response = "\n".join(all_responses)
-            self.widget.update_insights(combined_response)
-            return combined_response, gridded_img
+            if response and response.text:
+                self.widget.update_insights(response.text)
+                return response.text, gridded_img  # Return both the response and the exact image used
+            return None, None
             
         except Exception as e:
             self.widget.update_status(f"Error: {str(e)}")
@@ -1331,70 +1243,99 @@ class JobApplicationAssistant:
         overlay = img.copy()
         
         # Define colors (BGR format)
-        GRID_COLOR = (0, 165, 255)  # Bright orange (BGR format) - very recognizable by AI
+        GRID_COLOR = (0, 0, 255)  # Pure red - best for AI detection
+        MARKER_COLOR = (255, 0, 0)  # Blue markers for intersection points
         
-        # Draw main grid with thicker lines
+        # Draw main grid with intersection markers
         for i in range(41):  # 41 lines for 40 cells
             x = i * main_cell_width
-            cv2.line(overlay, (x, 0), (x, height), GRID_COLOR, 1)  # Thinner lines for less visual noise
+            cv2.line(overlay, (x, 0), (x, height), GRID_COLOR, 1)
             
-        for i in range(41):  # 41 lines for 40 cells
-            y = i * main_cell_height
-            cv2.line(overlay, (0, y), (width, y), GRID_COLOR, 1)  # Thinner lines for less visual noise
+            for j in range(41):
+                y = j * main_cell_height
+                if i == 0:  # Draw horizontal lines once
+                    cv2.line(overlay, (0, y), (width, y), GRID_COLOR, 1)
+                
+                # Draw intersection markers
+                intersection_x = x
+                intersection_y = y
+                
+                # Draw a more visible intersection marker
+                cv2.circle(overlay, (intersection_x, intersection_y), 3, MARKER_COLOR, -1)
+                
+                # Add coordinate text at each intersection
+                if i < 40 and j < 40:  # Don't add text for the last lines
+                    # Calculate column letters using base-26 system
+                    first_letter = chr(65 + (i // 26))
+                    second_letter = chr(65 + (i % 26))
+                    coord = f"{first_letter}{second_letter}{j+1}"
+                    
+                    # Draw coordinate background for better visibility
+                    text_size = cv2.getTextSize(coord, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
+                    text_x = intersection_x + 5
+                    text_y = intersection_y - 5
+                    
+                    # Draw white background rectangle
+                    cv2.rectangle(overlay, 
+                                (text_x - 2, text_y - text_size[1] - 2),
+                                (text_x + text_size[0] + 2, text_y + 2),
+                                (255, 255, 255),
+                                -1)
+                    
+                    # Draw coordinate text
+                    cv2.putText(overlay, coord,
+                              (text_x, text_y),
+                              cv2.FONT_HERSHEY_SIMPLEX,
+                              0.4,
+                              GRID_COLOR,
+                              1)
         
-        # Draw main grid labels with larger text
-        for main_row in range(40):
-            for main_col in range(40):
-                # Calculate column letters using base-26 system
-                first_letter = chr(65 + (main_col // 26))
-                second_letter = chr(65 + (main_col % 26))
-                main_coord = f"{first_letter}{second_letter}{main_row + 1}"
-                
-                # Calculate main cell boundaries
-                main_x_start = main_col * main_cell_width
-                main_y_start = main_row * main_cell_height
-                
-                # Calculate center of cell for label
-                label_x = main_x_start + (main_cell_width // 2)  # Center horizontally
-                label_y = main_y_start + (main_cell_height // 2)  # Center vertically
-                
-                # Draw white outline for better visibility (much thicker)
-                cv2.putText(overlay, main_coord,
-                          (label_x - 25, label_y),  # Offset for centering text
-                          cv2.FONT_HERSHEY_SIMPLEX,
-                          0.7,  # Much larger font size
-                          (255, 255, 255),
-                          6)  # Very thick outline
-                
-                # Draw orange text (thicker)
-                cv2.putText(overlay, main_coord,
-                          (label_x - 25, label_y),  # Offset for centering text
-                          cv2.FONT_HERSHEY_SIMPLEX,
-                          0.7,  # Much larger font size
-                          GRID_COLOR,
-                          2)  # Thicker text
-                
-                # Draw center dot for reference (larger and more visible)
-                center_x = main_x_start + (main_cell_width // 2)
-                center_y = main_y_start + (main_cell_height // 2)
-                cv2.circle(overlay, (center_x, center_y), 4, GRID_COLOR, -1)  # Larger dot
+        # Add matrix indicators along edges
+        for i in range(40):
+            # Column indicators (AA-ZZ)
+            first_letter = chr(65 + (i // 26))
+            second_letter = chr(65 + (i % 26))
+            col_label = f"{first_letter}{second_letter}"
+            
+            # Draw column label at top
+            cv2.putText(overlay, col_label,
+                      (i * main_cell_width + 5, 20),
+                      cv2.FONT_HERSHEY_SIMPLEX,
+                      0.5,
+                      GRID_COLOR,
+                      2)
+            
+            # Row indicators (1-40)
+            row_label = str(i + 1)
+            # Draw row label on left
+            cv2.putText(overlay, row_label,
+                      (5, i * main_cell_height + 20),
+                      cv2.FONT_HERSHEY_SIMPLEX,
+                      0.5,
+                      GRID_COLOR,
+                      2)
         
         # Blend overlay with original image
-        alpha = 0.4  # More transparent for better visibility of underlying form
+        alpha = 0.5  # Balanced transparency
         cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, overlay)
         
         # Add legend with larger text
-        legend_height = 80
+        legend_height = 100
         legend = np.zeros((legend_height, width, 3), dtype=np.uint8)
+        legend.fill(255)  # White background
         font = cv2.FONT_HERSHEY_SIMPLEX
         
-        # Add legend text with larger font
+        # Add legend text with clear formatting
         def add_legend_text(text, pos_x, pos_y):
-            cv2.putText(legend, text, (pos_x, pos_y), font, 1.2, (255, 255, 255), 6)  # Much thicker white outline
-            cv2.putText(legend, text, (pos_x, pos_y), font, 1.2, GRID_COLOR, 2)  # Thicker text
+            cv2.putText(legend, text, (pos_x, pos_y), font, 1.0, (0, 0, 0), 2)  # Black text
         
-        add_legend_text(f"Grid Reference - Screen: {screen_width_pixels}x{screen_height_pixels} px", 10, 35)
-        add_legend_text("Main Grid: AA1-ZZ40 (40x40 grid)", 10, 70)
+        add_legend_text("Matrix Reference System:", 10, 30)
+        add_legend_text(f"• Grid Size: 40x40 (AA1-ZZ40) - Screen: {screen_width_pixels}x{screen_height_pixels} px", 10, 60)
+        add_legend_text("• Blue Dots: Click/Type Targets   • Red Lines: Grid Reference", 10, 90)
+        
+        # Add visual examples in legend
+        cv2.circle(legend, (width - 150, 30), 3, MARKER_COLOR, -1)  # Example intersection point
+        cv2.line(legend, (width - 100, 30), (width - 50, 30), GRID_COLOR, 1)  # Example grid line
         
         # Combine image with legend
         img_with_legend = np.vstack([overlay, legend])

@@ -1,74 +1,57 @@
-# AI Auto Clicker
+# Job Application Assistant
 
-An intelligent auto clicker that uses Google's Gemini AI to analyze screenshots and perform automated clicking and typing actions based on the screen content.
+An intelligent assistant that helps automate and streamline the job application process using AI-powered form analysis and automated input.
 
 ## Features
 
-- Takes screenshots automatically at regular intervals
-- Analyzes screenshots using Google's Gemini AI Vision model
-- Automatically moves mouse and clicks based on AI analysis
-- Can type text based on AI recommendations
-- Built-in safety features (move mouse to corner to stop)
-- Configurable delay between actions
+- **Intelligent Form Analysis**: Uses Google's Gemini AI to analyze job application forms
+- **Automated Input**: Automatically fills in form fields based on your profile
+- **Grid-Based Navigation**: Precise coordinate system for accurate form interaction
+- **Real-time Insights**: Provides instant feedback and suggestions
+- **Hotkey Support**: Quick access to key features
+  - `Ctrl+Shift+A`: Analyze current form
+  - `Ctrl+Shift+J`: Analyze job description
+  - `Ctrl+Q`: Quit application
 
-## Prerequisites
+## Requirements
 
-- Python 3.7 or higher
-- Google Cloud API key with Gemini AI access
+- Python 3.8+
+- PyQt5
+- Google Gemini AI API
+- OpenCV
+- Other dependencies listed in requirements.txt
 
-## Installation
+## Setup
 
-1. Clone this repository
-2. Install the required dependencies:
-   ```bash
-   pip install -r requirements.txt
+1. Clone the repository
+2. Create a virtual environment: `python -m venv venv`
+3. Activate the virtual environment:
+   - Windows: `venv\Scripts\activate`
+   - Unix/MacOS: `source venv/bin/activate`
+4. Install dependencies: `pip install -r requirements.txt`
+5. Create a `.env` file with your Google API key:
    ```
-3. Copy `.env.example` to `.env` and add your Google API key:
+   GOOGLE_API_KEY=your_api_key_here
    ```
-   GOOGLE_API_KEY=your_google_api_key_here
-   ```
+6. Create a `user_profile.json` with your profile information
 
 ## Usage
 
-1. Make sure your Google API key is set in the `.env` file
-2. Run the script:
-   ```bash
-   python auto_clicker.py
-   ```
-3. The program will start taking screenshots and analyzing them
-4. To stop the program, move your mouse to any corner of the screen
+1. Run the application: `python job_application_assistant.py`
+2. Use hotkeys to analyze forms and job descriptions
+3. Follow the on-screen instructions for form filling
 
-## Safety Features
+## Grid System
 
-- Move mouse to any corner of the screen to stop the program (failsafe)
-- 0.5-second delay between actions to prevent too rapid clicking
-- Coordinates are validated to ensure they're within screen bounds
-- Temporary files are automatically cleaned up
-
-## How It Works
-
-1. The script captures a screenshot of your screen
-2. The screenshot is sent to Gemini AI for analysis
-3. The AI returns a description of clickable elements and text fields
-4. The script parses the AI's response into actionable commands
-5. PyAutoGUI executes the mouse movements, clicks, and typing
-6. The process repeats after the configured interval
-
-## Customization
-
-You can modify the following parameters in the script:
-- `interval`: Time between screenshots (default: 5 seconds)
-- `pyautogui.PAUSE`: Delay between actions (default: 0.5 seconds)
-
-## Error Handling
-
-The script includes comprehensive error handling:
-- Invalid API key detection
-- Screenshot capture errors
-- AI analysis errors
-- Action execution errors
-- Automatic cleanup of temporary files
+The application uses a sophisticated grid system for precise form interaction:
+- Main grid: 40x40 cells (AA1-ZZ40)
+- Each cell contains reference points for accurate positioning
+- Visual overlay helps verify correct element targeting
 
 ## Contributing
 
-Feel free to submit issues and enhancement requests! 
+Feel free to submit issues, fork the repository, and create pull requests for any improvements.
+
+## License
+
+MIT License - see LICENSE file for details 
