@@ -2341,58 +2341,61 @@ class JobApplicationAssistant:
                     # Add annotations
                     for idx, action in enumerate(actions, 1):
                         action_type = action[0]
-                        # For Retina displays, we need to use the raw coordinates
                         x, y = int(action[1]), int(action[2])
                         grid_coord = action[4]
-                        description = action[3] if action_type == 'type' else action[3]
+                        description = action[3]
                         
-                        # Calculate annotation offset to avoid overlapping
-                        y_offset = idx * 30  # Space out annotations vertically
-                        
-                        # Draw action marker with precise targeting
+                        # Draw action marker with enhanced visibility
+                        # Main target circle
                         cv2.circle(annotated_img, (x, y), 15, (0, 0, 255), 2)  # Red circle
-                        cv2.line(annotated_img, (x-10, y), (x+10, y), (0, 0, 255), 1)  # Crosshair
-                        cv2.line(annotated_img, (x, y-10), (x, y+10), (0, 0, 255), 1)
                         
-                        # Add label with white background and improved positioning
-                        label = f"{idx}. {action_type.upper()} at {grid_coord}"
-                        text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                        # Precise crosshair
+                        cv2.line(annotated_img, (x-15, y), (x+15, y), (0, 0, 255), 1)  # Horizontal line
+                        cv2.line(annotated_img, (x, y-15), (x, y+15), (0, 0, 255), 1)  # Vertical line
                         
-                        # Position label to the right of the point with offset
+                        # Add label with improved formatting
+                        action_label = f"{idx}. {action_type.upper()} at {grid_coord}"
+                        if action_type == 'type':
+                            action_label += f"\nText: \"{description}\""
+                        else:
+                            action_label += f"\nAction: {description}"
+                            
+                        # Calculate text position with better spacing
                         label_x = x + 25
-                        label_y = y + y_offset
+                        label_y = y - 15 + (idx * 40)  # Increased vertical spacing between labels
                         
-                        # Draw white background for text with padding
-                        padding = 5
+                        # Draw white background for better text visibility
+                        text_size = cv2.getTextSize(action_label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+                        bg_padding = 5
+                        
+                        # Split label into lines for multi-line background
+                        lines = action_label.split('\n')
+                        line_height = text_size[1] + 5
+                        total_height = line_height * len(lines)
+                        
+                        # Draw background rectangle for all lines
                         cv2.rectangle(annotated_img,
-                                    (label_x - padding, label_y - text_size[1] - padding),
-                                    (label_x + text_size[0] + padding, label_y + padding),
+                                    (label_x - bg_padding, label_y - text_size[1] - bg_padding),
+                                    (label_x + text_size[0] + bg_padding, label_y + total_height),
                                     (255, 255, 255),
                                     -1)
                         
-                        # Draw text with improved visibility
-                        cv2.putText(annotated_img, label,
-                                  (label_x, label_y),
-                                  cv2.FONT_HERSHEY_SIMPLEX,
-                                  0.7, (0, 0, 255), 2)
+                        # Draw each line of text
+                        for line_idx, line in enumerate(lines):
+                            cv2.putText(annotated_img,
+                                      line,
+                                      (label_x, label_y + (line_idx * line_height)),
+                                      cv2.FONT_HERSHEY_SIMPLEX,
+                                      0.6,
+                                      (0, 0, 255),
+                                      2)
                         
-                        # Add description below label
-                        desc_y = label_y + 20
-                        desc_text = f"Purpose: {description}"
-                        desc_size = cv2.getTextSize(desc_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)[0]
-                        
-                        # Draw white background for description
-                        cv2.rectangle(annotated_img,
-                                    (label_x - padding, desc_y - text_size[1] - padding),
-                                    (label_x + desc_size[0] + padding, desc_y + padding),
-                                    (255, 255, 255),
-                                    -1)
-                        
-                        # Draw description text
-                        cv2.putText(annotated_img, desc_text,
-                                  (label_x, desc_y),
-                                  cv2.FONT_HERSHEY_SIMPLEX,
-                                  0.6, (0, 0, 255), 1)
+                        # Add connecting line from target to label
+                        cv2.line(annotated_img,
+                                (x + 15, y),
+                                (label_x - bg_padding, label_y + (total_height // 2)),
+                                (0, 0, 255),
+                                1)
                     
                     # Save annotated screenshot
                     annotated_path = os.path.join(session_dir, "annotated_screenshot.png")
