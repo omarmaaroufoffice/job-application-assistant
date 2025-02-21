@@ -525,22 +525,24 @@ class FloatingWidget(QMainWindow):
                 self.actions_text.setText("No actionable elements found")
                 return
                 
-            text = "Pending Actions:\n\n"
-            for idx, action in enumerate(actions, 1):
-                if len(action) >= 6:  # Make sure we have all needed elements
-                    action_type = action[0]
-                    grid_coord = action[4]  # Grid coordinate is now in position 4
-                    description = action[3]  # Description is in position 3
-                    
-                    if action_type == 'type':
-                        text += f"{idx}. TYPE at {grid_coord}:\n   Text: \"{action[3]}\"\n   Purpose: {description}\n\n"
-                    else:
-                        text += f"{idx}. {action_type.upper()} at {grid_coord}:\n   Purpose: {description}\n\n"
+            # Only take the first (most relevant) action
+            action = actions[0]
+            
+            text = "Next Action:\n\n"
+            if len(action) >= 6:  # Make sure we have all needed elements
+                action_type = action[0]
+                grid_coord = action[4]  # Grid coordinate is now in position 4
+                description = action[3]  # Description is in position 3
+                
+                if action_type == 'type':
+                    text += f"TYPE at {grid_coord}:\n   Text: \"{action[3]}\"\n   Purpose: {description}"
+                else:
+                    text += f"{action_type.upper()} at {grid_coord}:\n   Purpose: {description}"
             
             self.actions_text.setText(text)
             
-            # Show the confirmation section
-            self._show_confirmation(actions)
+            # Show the confirmation section with only the most relevant action
+            self._show_confirmation([action])
             
         except Exception as e:
             print(f"Error updating actions: {e}")
@@ -556,24 +558,24 @@ class FloatingWidget(QMainWindow):
             self.current_actions = actions
             self.current_action_index = 0
             
-            # Create detailed confirmation message
-            confirmation = "Please confirm the following actions:\n\n"
+            # Create detailed confirmation message for the single action
+            action = actions[0]
+            confirmation = "Please confirm this action:\n\n"
             
-            for idx, action in enumerate(actions, 1):
-                if len(action) >= 6:
-                    action_type = action[0]
-                    grid_coord = action[4]
-                    description = action[3]
-                    
-                    if action_type == 'type':
-                        confirmation += f"{idx}. TYPE at {grid_coord}:\n"
-                        confirmation += f"   Text: \"{action[3]}\"\n"
-                        confirmation += f"   Purpose: {description}\n\n"
-                    else:
-                        confirmation += f"{idx}. {action_type.upper()} at {grid_coord}:\n"
-                        confirmation += f"   Purpose: {description}\n\n"
+            if len(action) >= 6:
+                action_type = action[0]
+                grid_coord = action[4]
+                description = action[3]
+                
+                if action_type == 'type':
+                    confirmation += f"TYPE at {grid_coord}:\n"
+                    confirmation += f"   Text: \"{action[3]}\"\n"
+                    confirmation += f"   Purpose: {description}\n"
+                else:
+                    confirmation += f"{action_type.upper()} at {grid_coord}:\n"
+                    confirmation += f"   Purpose: {description}\n"
             
-            confirmation += "\nPress 'Execute' to perform these actions, or 'Skip' to cancel."
+            confirmation += "\nPress 'Execute' to perform this action, 'Skip' to try another action, or 'Quit' to cancel."
             
             # Show confirmation section
             self.confirmation_text.setText(confirmation)
@@ -824,6 +826,15 @@ class JobApplicationAssistant:
     def __init__(self):
         # Initialize Qt Application
         self.app = QApplication(sys.argv)
+        
+        # Add emergency stop flags
+        self.emergency_stop = False
+        self.last_mouse_pos = (0, 0)
+        self.corner_stop_threshold = 10  # pixels from corner to trigger stop
+        
+        # Add mouse listener for corner detection
+        self.mouse_listener = mouse.Listener(on_move=self.on_mouse_move)
+        self.mouse_listener.start()
         
         # Initialize screen dimensions with proper scaling for Retina display
         screen = self.app.primaryScreen()
@@ -1204,71 +1215,69 @@ class JobApplicationAssistant:
             return None, None
             
     def execute_single_action(self, action):
-        """Execute a single action with precise coordinates and verified real clicks"""
+        """Execute a single action automatically without confirmation"""
+        if self.emergency_stop:
+            print("Action execution blocked: Emergency stop active")
+            return False
+            
         try:
             action_type = action[0]
-            x, y = action[1], action[2]  # These are now properly scaled coordinates
+            x, y = action[1], action[2]
             description = action[3]
             grid_coord = action[4]
             
-            print(f"\nExecuting action: {action_type} at {grid_coord} ({x}, {y})")
+            print(f"\nAutomatically executing action: {action_type} at {grid_coord} ({x}, {y})")
             self.widget.update_status(f"Executing: {description}")
             
             # Move mouse with increased precision
             current_x, current_y = pyautogui.position()
             distance = ((x - current_x) ** 2 + (y - current_y) ** 2) ** 0.5
-            
-            # Adjust duration based on distance
             duration = min(max(0.3, distance / 1000), 1.0)
             
-            # Move in two steps for more accuracy
-            mid_x = current_x + (x - current_x) // 2
-            mid_y = current_y + (y - current_y) // 2
+            # Check for emergency stop before each major action
+            if self.emergency_stop:
+                return False
             
-            # First move to midpoint
-            pyautogui.moveTo(mid_x, mid_y, duration=duration/2)
+            # Move in two steps for more accuracy
+            pyautogui.moveTo(x + (x - current_x) // 2, y + (y - current_y) // 2, duration=duration/2)
+            if self.emergency_stop:
+                return False
             time.sleep(0.1)
             
-            # Then to final position
             pyautogui.moveTo(x, y, duration=duration/2)
-            time.sleep(0.2)  # Wait for mouse to settle
+            if self.emergency_stop:
+                return False
+            time.sleep(0.2)
             
-            # Verify position
-            final_x, final_y = pyautogui.position()
-            if abs(final_x - x) > 2 or abs(final_y - y) > 2:
-                print(f"Warning: Final position ({final_x}, {final_y}) differs from target ({x}, {y})")
-            
-            # Execute the action with proper focus handling
+            # Execute the action
             if action_type == 'click':
-                # First click to focus
                 pyautogui.click(x, y)
-                time.sleep(0.5)  # Wait 0.5 seconds between focus and action
-                # Second click for the actual action
-                pyautogui.click(x, y)
-                time.sleep(0.3)  # Wait for click to register
+                if self.emergency_stop:
+                    return False
+                time.sleep(0.3)
             elif action_type == 'type':
-                # Focus the field first
                 pyautogui.click(x, y)
-                time.sleep(0.5)  # Wait 0.5 seconds between focus and typing
-                text = action[3]  # Text is in the description field for type actions
+                if self.emergency_stop:
+                    return False
+                time.sleep(0.5)
+                text = action[3]
                 pyautogui.typewrite(text, interval=0.1)
-                # Press Enter after typing to trigger search
+                if self.emergency_stop:
+                    return False
                 time.sleep(0.5)
                 pyautogui.press('enter')
             
-            # Wait for any page updates/loading
-            time.sleep(1.0)
-            
-            # Hide widget before taking screenshot
+            # Take new screenshot and analyze next state
+            if self.emergency_stop:
+                return False
+                
             self.widget.hide()
             self.app.processEvents()
             time.sleep(0.5)
             
-            # Take new screenshot for analysis
             screenshot = pyautogui.screenshot()
             img = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
             
-            # Show widget again
             self.widget.show()
             
             # Get screen dimensions for grid overlay
@@ -1304,10 +1313,6 @@ class JobApplicationAssistant:
                 # Parse next actions
                 next_actions = self._parse_ai_response(response.text)
                 if next_actions:
-                    # Update UI with next actions
-                    self.widget.signals.update_actions_signal.emit(next_actions)
-                    self.widget.signals.show_confirmation_signal.emit(next_actions)
-                    
                     # Update goal state with results
                     results = {
                         'last_action': action_type,
@@ -1334,7 +1339,7 @@ class JobApplicationAssistant:
             print(f"Error executing action: {e}")
             self.widget.update_status(f"Error executing action: {e}")
             return False
-            
+
     def on_analyze_form(self):
         """Handle form analysis hotkey"""
         if not self.running:
@@ -2251,39 +2256,38 @@ class JobApplicationAssistant:
             listener.join()
 
     def on_press(self, key):
-        """Handle key press events"""
+        """Handle key press events with emergency stop"""
         try:
             # Add the pressed key to current keys
-            if hasattr(key, 'char'):  # Regular keys
+            if hasattr(key, 'char'):
                 self.current_keys.add(key.char.lower())
-            else:  # Special keys
+            else:
                 self.current_keys.add(key)
             
-            # Check for Ctrl+Shift+A
+            # Check for Emergency Stop (Ctrl+X)
+            if (keyboard.Key.ctrl_l in self.current_keys and 
+                'x' in self.current_keys):
+                self.trigger_emergency_stop("Ctrl+X pressed")
+                return
+            
+            # Rest of existing key handling
             if (keyboard.Key.ctrl_l in self.current_keys and 
                 keyboard.Key.shift in self.current_keys and 
                 'a' in self.current_keys):
                 self.on_analyze_form()
-            
-            # Check for Ctrl+Shift+J
             elif (keyboard.Key.ctrl_l in self.current_keys and 
                   keyboard.Key.shift in self.current_keys and 
                   'j' in self.current_keys):
                 self.on_analyze_job()
-            
-            # Check for Ctrl+Q
             elif (keyboard.Key.ctrl_l in self.current_keys and 
                   'q' in self.current_keys):
                 self.running = False
                 self.app.quit()
-            
-            # Check for Escape
             elif key == keyboard.Key.esc:
                 self.running = False
                 self.app.quit()
-                
         except AttributeError:
-            pass  # Ignore attribute errors from special keys
+            pass
 
     def on_release(self, key):
         """Handle key release events"""
@@ -2296,83 +2300,46 @@ class JobApplicationAssistant:
             pass  # Ignore attribute errors from special keys
 
     def analyze_current_state(self, action_details: Dict[str, Any]):
+        """Analyze and execute actions automatically"""
         try:
             # Create timestamped directory for this analysis session
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             session_dir = os.path.join(self.screenshots_dir, f"analysis_session_{timestamp}")
             os.makedirs(session_dir, exist_ok=True)
             
-            # Initialize plan tracking
-            self.current_plan = {
-                'actions': [],
-                'current_index': 0,
-                'verification_results': [],
-                'session_dir': session_dir,
-                'timestamp': timestamp
-            }
+            # Reset emergency stop flag at start of new analysis
+            self.emergency_stop = False
             
             # Create initial plan
             initial_plan = self._create_and_analyze_plan(session_dir, action_details)
             if not initial_plan:
                 self.widget.update_status("Could not create initial plan")
                 return
-                
-            self.current_plan['actions'] = initial_plan
             
-            # Show initial plan to user
-            self._display_current_plan("Initial Plan Created", initial_plan)
+            # Execute actions automatically
+            for action in initial_plan:
+                if self.emergency_stop:
+                    print("Automation stopped by emergency trigger")
+                    break
+                    
+                # Execute action
+                success = self.execute_single_action(action)
+                if not success:
+                    print(f"Action failed: {action}")
+                    break
+                    
+                # Wait between actions
+                time.sleep(1.0)
+                
+                # Take new screenshot and analyze next action if needed
+                self._verify_and_update_plan()
             
-            # Process one action at a time with verification
-            while self.current_plan['current_index'] < len(self.current_plan['actions']):
-                current_action = self.current_plan['actions'][self.current_plan['current_index']]
-                
-                # Show current action for confirmation
-                self.widget.signals.update_actions_signal.emit([current_action])
-                self.widget.signals.show_confirmation_signal.emit([current_action])
-                
-                # Wait for user confirmation and action execution
-                # (This happens in execute_single_action)
-                
-                # After action execution, verify and update plan
-                verification_result = self._verify_and_update_plan()
-                
-                if verification_result['status'] == 'success':
-                    # Action successful, move to next action
-                    self.current_plan['current_index'] += 1
-                    self._display_current_plan("Action Successful - Continuing Plan", 
-                                            self.current_plan['actions'][self.current_plan['current_index']:])
-                elif verification_result['status'] == 'failed':
-                    # Action failed, need to replan
-                    new_plan = self._create_and_analyze_plan(session_dir, action_details, 
-                                                           failed_action=current_action)
-                    if new_plan:
-                        self.current_plan['actions'] = new_plan
-                        self.current_plan['current_index'] = 0
-                        self._display_current_plan("Plan Updated After Failure", new_plan)
-                    else:
-                        self.widget.update_status("Could not create new plan after failure")
-                        break
-                elif verification_result['status'] == 'needs_adjustment':
-                    # Action needs adjustment, update current action and retry
-                    if verification_result.get('adjusted_action'):
-                        self.current_plan['actions'][self.current_plan['current_index']] = verification_result['adjusted_action']
-                        self._display_current_plan("Action Adjusted - Retrying", 
-                                                [verification_result['adjusted_action']])
-                    else:
-                        self.widget.update_status("Could not adjust action")
-                        break
-                
-                # Store verification result
-                self.current_plan['verification_results'].append(verification_result)
-                
-            # Plan completed or terminated
-            self.widget.update_status("Plan execution completed")
+            if not self.emergency_stop:
+                self.widget.update_status("Automated execution completed")
             
         except Exception as e:
-            print(f"Error in analyze_current_state: {e}")
-            self.widget.update_status(f"Analysis failed: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            print(f"Error in automated execution: {e}")
+            self.widget.update_status(f"Automation failed: {str(e)}")
 
     def _create_and_analyze_plan(self, session_dir: str, action_details: Dict[str, Any], 
                                 failed_action: Optional[tuple] = None) -> List[tuple]:
@@ -2892,6 +2859,37 @@ class JobApplicationAssistant:
         except Exception as e:
             print(f"Error saving screenshots: {e}")
             return False
+
+    def on_mouse_move(self, x, y):
+        """Handle mouse movement for emergency stop"""
+        try:
+            # Get screen dimensions
+            screen = self.app.primaryScreen()
+            width = screen.geometry().width()
+            height = screen.geometry().height()
+            
+            # Check if mouse is in top-right corner
+            if x >= width - self.corner_stop_threshold and y <= self.corner_stop_threshold:
+                print("\nEmergency Stop Triggered: Mouse moved to top-right corner")
+                self.trigger_emergency_stop("Mouse moved to top-right corner")
+        except Exception as e:
+            print(f"Error in mouse move handler: {e}")
+
+    def trigger_emergency_stop(self, reason: str):
+        """Emergency stop all automation"""
+        self.emergency_stop = True
+        self.widget.update_status(f"EMERGENCY STOP: {reason}")
+        print(f"\nEMERGENCY STOP TRIGGERED: {reason}")
+        print("Stopping all automated actions...")
+        
+        # Clear any pending actions
+        self.current_actions = []
+        if hasattr(self, 'current_plan'):
+            self.current_plan = {'actions': [], 'current_index': 0}
+        
+        # Update UI to show stopped state
+        self.widget.update_insights("Automation stopped by emergency trigger.\nReason: " + reason)
+        self.widget.signals.update_actions_signal.emit([])
 
 if __name__ == "__main__":
     assistant = JobApplicationAssistant()
