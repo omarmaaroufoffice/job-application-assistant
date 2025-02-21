@@ -40,9 +40,12 @@ class SignalHandler(QObject):
 class FloatingWidget(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Job Assistant Insights")
+        self.setWindowTitle("AI Assistant")
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
-        self.setGeometry(50, 50, 400, 700)  # Made taller to accommodate new section
+        self.setGeometry(50, 50, 400, 800)  # Made taller for new section
+        
+        # Initialize conversation history
+        self.conversation_history = []
         
         # Create signal handler
         self.signals = SignalHandler()
@@ -60,12 +63,50 @@ class FloatingWidget(QMainWindow):
         self.layout.setContentsMargins(10, 10, 10, 10)
         
         # Add title bar
-        self.title_bar = QLabel("Job Application Assistant")
+        self.title_bar = QLabel("AI Assistant")
         self.title_bar.setFont(QFont('Arial', 12, QFont.Bold))
         self.title_bar.setAlignment(Qt.AlignCenter)
         self.title_bar.setStyleSheet("background-color: #2196F3; color: white; padding: 10px;")
         self.title_bar.setFixedHeight(40)
         self.layout.addWidget(self.title_bar)
+        
+        # Add user input section
+        input_label = QLabel("What would you like me to help you with?")
+        input_label.setFont(QFont('Arial', 10, QFont.Bold))
+        self.layout.addWidget(input_label)
+        
+        self.user_input = QTextEdit()
+        self.user_input.setPlaceholderText("Enter your request here (e.g., 'Help me reply to emails', 'Fill out this job application', etc.)")
+        self.user_input.setMaximumHeight(60)
+        self.layout.addWidget(self.user_input)
+        
+        # Add send button
+        self.send_button = QPushButton("Send Request")
+        self.send_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                padding: 5px 15px;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+        """)
+        self.send_button.clicked.connect(self.on_send_request)
+        self.layout.addWidget(self.send_button)
+        
+        # Add conversation history section
+        history_label = QLabel("Conversation History")
+        history_label.setFont(QFont('Arial', 10, QFont.Bold))
+        self.layout.addWidget(history_label)
+        
+        self.conversation_text = QTextEdit()
+        self.conversation_text.setReadOnly(True)
+        self.conversation_text.setMinimumHeight(150)
+        self.conversation_text.setStyleSheet("background-color: white; border: 1px solid #ccc;")
+        self.layout.addWidget(self.conversation_text)
         
         # Add insights section
         insights_label = QLabel("Current Insights")
@@ -74,7 +115,7 @@ class FloatingWidget(QMainWindow):
         
         self.insights_text = QTextEdit()
         self.insights_text.setReadOnly(True)
-        self.insights_text.setMinimumHeight(200)
+        self.insights_text.setMinimumHeight(150)
         self.insights_text.setStyleSheet("background-color: white; border: 1px solid #ccc;")
         self.layout.addWidget(self.insights_text)
         
@@ -85,7 +126,7 @@ class FloatingWidget(QMainWindow):
         
         self.actions_text = QTextEdit()
         self.actions_text.setReadOnly(True)
-        self.actions_text.setMinimumHeight(200)
+        self.actions_text.setMinimumHeight(150)
         self.actions_text.setStyleSheet("background-color: white; border: 1px solid #ccc;")
         self.layout.addWidget(self.actions_text)
         
@@ -211,9 +252,238 @@ class FloatingWidget(QMainWindow):
         self.raise_()
         self.activateWindow()
         
-        # Test content
-        self.insights_text.setText("Widget initialized and ready.\nWaiting for analysis...")
-        self.actions_text.setText("No actions pending.\nUse hotkeys to analyze forms or job descriptions.")
+        # Initialize with welcome message
+        self.conversation_text.setText("AI Assistant: Hello! I'm here to help you with any task. What would you like me to do?")
+        self.insights_text.setText("Ready to assist you.\nUse the input box above to make a request, or use hotkeys for specific tasks.")
+        self.actions_text.setText("No actions pending.\nWaiting for your request...")
+
+    def on_send_request(self):
+        """Handle user request submission with screenshot analysis"""
+        user_request = self.user_input.toPlainText().strip()
+        if not user_request:
+            return
+            
+        # Add user request to conversation history
+        self.conversation_history.append({"role": "user", "content": user_request})
+        self._update_conversation_display()
+        
+        try:
+            # Get timestamp for file naming
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            self.update_status("Taking screenshot for analysis...")
+            
+            # Create screenshots directory if it doesn't exist
+            os.makedirs(self.assistant.screenshots_dir, exist_ok=True)
+            
+            # First create the gridded screenshot
+            screenshot = pyautogui.screenshot()
+            img = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+            
+            # Get screen dimensions and scale factor
+            screen = self.assistant.app.primaryScreen()
+            scale_factor = screen.devicePixelRatio()
+            
+            # Calculate dimensions in actual pixels
+            screen_width_pixels = int(screen.geometry().width() * scale_factor)
+            screen_height_pixels = int(screen.geometry().height() * scale_factor)
+            
+            # Create the gridded overlay
+            gridded_img = self.assistant._create_grid_overlay(img, screen_width_pixels, screen_height_pixels)
+            
+            # Save the gridded image
+            gridded_path = os.path.join(
+                self.assistant.screenshots_dir,
+                f"analysis_{timestamp}_grid.png"
+            )
+            
+            # Save gridded image
+            success = cv2.imwrite(gridded_path, gridded_img)
+            if not success:
+                raise ValueError(f"Failed to save gridded image to {gridded_path}")
+            
+            # Verify the file was written
+            if not os.path.exists(gridded_path):
+                raise ValueError(f"Gridded image file was not created at {gridded_path}")
+            
+            # Convert to PIL Image for Gemini AI
+            annotated_pil = Image.fromarray(cv2.cvtColor(gridded_img, cv2.COLOR_BGR2RGB))
+            
+            # Create analysis prompt with user request and conversation history
+            prompt = self.assistant._create_analysis_prompt() + f"""
+            
+            User Request: {user_request}
+            
+            Previous Conversation:
+            {self._format_conversation_history()}
+            """
+            
+            # Generate response using Gemini AI with the screenshot
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[prompt, annotated_pil]
+            )
+            
+            if response and response.text:
+                print("\nReceived AI response")
+                self.update_insights(response.text)
+                
+                # Add AI response to conversation history
+                self.conversation_history.append({"role": "assistant", "content": response.text})
+                self._update_conversation_display()
+                
+                # Parse actions and create initial annotation
+                current_actions = self.assistant.parse_ai_response(response.text)
+                if current_actions:
+                    # Initialize verification iteration counter
+                    verification_iteration = 0
+                    min_iterations = 2
+                    max_iterations = 4
+                    is_satisfied = False
+                    previous_actions = []
+                    
+                    # Store only the first action for processing
+                    self.current_actions = [current_actions[0]]
+                    current_actions = self.current_actions
+                    
+                    while (verification_iteration < max_iterations and 
+                           (verification_iteration < min_iterations or not is_satisfied)):
+                        verification_iteration += 1
+                        print(f"\n{'='*50}")
+                        print(f"Verification Iteration {verification_iteration}/{max_iterations}")
+                        print(f"{'='*50}")
+                        
+                        # Store current actions for comparison
+                        previous_actions.append(current_actions.copy())
+                        
+                        try:
+                            # Generate annotated image with current actions
+                            current_annotated_path = self.assistant.annotate_screenshot(
+                                gridded_path,
+                                current_actions,
+                                f"{timestamp}_iter{verification_iteration}"
+                            )
+                            
+                            # Verify the annotated image exists
+                            if not os.path.exists(current_annotated_path):
+                                raise ValueError(f"Annotated image not found at {current_annotated_path}")
+                            
+                            # Read back the annotated image
+                            current_annotated_img = cv2.imread(current_annotated_path)
+                            if current_annotated_img is None:
+                                raise ValueError(f"Could not read annotated image from {current_annotated_path}")
+                            
+                            # Convert to PIL for Gemini
+                            current_annotated_pil = Image.fromarray(cv2.cvtColor(current_annotated_img, cv2.COLOR_BGR2RGB))
+                            
+                            # Take a new screenshot to compare with
+                            verification_screenshot = pyautogui.screenshot()
+                            verification_img = cv2.cvtColor(np.array(verification_screenshot), cv2.COLOR_RGB2BGR)
+                            
+                            # Create verification image with grid overlay
+                            verification_gridded = self.assistant._create_grid_overlay(verification_img, screen_width_pixels, screen_height_pixels)
+                            
+                            # Save verification image
+                            verification_path = os.path.join(
+                                self.assistant.screenshots_dir,
+                                f"verification_{timestamp}_iter{verification_iteration}.png"
+                            )
+                            cv2.imwrite(verification_path, verification_gridded)
+                            
+                            # Create verification prompt
+                            verification_prompt = self.assistant._create_verification_prompt(
+                                verification_iteration,
+                                max_iterations,
+                                min_iterations,
+                                current_actions,
+                                previous_actions[-1] if len(previous_actions) > 1 else None
+                            )
+                            
+                            # Generate verification using Gemini AI - use both annotated and verification images
+                            verification_response = client.models.generate_content(
+                                model="gemini-2.0-flash",
+                                contents=[
+                                    verification_prompt,
+                                    current_annotated_pil,  # Show the annotated plan
+                                    Image.fromarray(cv2.cvtColor(verification_gridded, cv2.COLOR_BGR2RGB))  # Show current state
+                                ]
+                            )
+                            
+                            if verification_response and verification_response.text:
+                                print(f"\nVerification Analysis (Iteration {verification_iteration}):")
+                                print("="*50)
+                                print(verification_response.text)
+                                print("="*50)
+                                
+                                # Update insights with iteration status
+                                self.update_insights(verification_response.text)
+                                
+                                # Process verification response and update actions
+                                current_actions = self.assistant._process_verification_response(
+                                    verification_response.text,
+                                    current_actions
+                                )
+                                
+                                # Update current_actions with verified coordinates
+                                if current_actions:
+                                    self.current_actions = [current_actions[0]]
+                                    current_actions = self.current_actions
+                                
+                                # Check if AI is satisfied
+                                is_satisfied = "SATISFIED" in verification_response.text.upper()
+                                if is_satisfied and verification_iteration >= min_iterations:
+                                    print(f"\nAI is satisfied with the results after {verification_iteration} iterations")
+                                    break
+                            else:
+                                raise ValueError("No response from AI for verification")
+                                
+                        except Exception as e:
+                            print(f"Error during iteration {verification_iteration}: {str(e)}")
+                            break
+                    
+                    # Update UI with final verified action
+                    if self.current_actions:
+                        self._update_actions(self.current_actions)
+                        self._show_confirmation(self.current_actions)
+                        self._update_status("Action ready for execution")
+                    else:
+                        self._update_status("No valid actions after verification")
+                        self._update_actions([])
+                else:
+                    self._update_status("No actionable elements found")
+                    self._update_actions([])
+            else:
+                self._update_status("No response from AI")
+                self._update_actions([])
+            
+            # Clear input field
+            self.user_input.clear()
+            
+        except Exception as e:
+            error_msg = f"Error processing request: {str(e)}"
+            print(error_msg)
+            self._update_status(error_msg)
+            self.conversation_history.append({"role": "assistant", "content": f"Error: {error_msg}"})
+            self._update_conversation_display()
+
+    def _format_conversation_history(self):
+        """Format conversation history for the prompt"""
+        formatted = []
+        for msg in self.conversation_history[-5:]:  # Get last 5 messages
+            role = "User" if msg["role"] == "user" else "Assistant"
+            formatted.append(f"{role}: {msg['content']}")
+        return "\n".join(formatted)
+
+    def _update_conversation_display(self):
+        """Update the conversation history display"""
+        formatted = []
+        for msg in self.conversation_history:
+            role = "You" if msg["role"] == "user" else "AI Assistant"
+            formatted.append(f"{role}: {msg['content']}\n")
+        self.conversation_text.setText("\n".join(formatted))
+        # Scroll to bottom
+        scrollbar = self.conversation_text.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
     
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
