@@ -1,0 +1,165 @@
+{
+    "personal_info": {
+        "full_name": "OMAR A MAAROUF",
+        "email": "omar.a.maarouf@gmail.com",
+        "phone": "(332) 733-5145",
+        "location": "Pacific Grove, CA",
+        "linkedin": "linkedin.com/in/omarmaarouf",
+        "github": "github.com/omarmaaroufoffice",
+        "portfolio": "cybermaarouf.com"
+    },
+    "summary": "Full Stack Developer and Cybersecurity Professional with CompTIA certifications (Network+, Security+) and medical background. Expert in AI-powered application development, security platforms, and healthcare solutions. Proven track record in developing scalable web applications, implementing security protocols, and managing cloud infrastructure. Over 2800 hours of experience in AI development and prompt engineering.",
+    "experience": [
+        {
+            "title": "Founder & Full Stack Developer",
+            "company": "Self-Employed",
+            "duration": "01/2023 - Present",
+            "description": [
+                "Architected and developed Rhuomai (rhuomaitx.com), a HIPAA-compliant medical concierge platform",
+                "Implemented secure patient data handling systems following healthcare industry standards",
+                "Integrated with multiple healthcare APIs and payment processing systems",
+                "Developed OmarSec Security Lab (cybermaarouf.com)",
+                "Created advanced password analysis system and network vulnerability scanning tools",
+                "Designed and implemented AI-powered CompTIA Security+ study platform",
+                "Developed PortfolioAI (instantportfoliogenerator.com)",
+                "Created Singularity Clock platform",
+                "Built Expertosy Match (expertosy.com)",
+                "Developed Tourist Scam Guard (travelscamnomore.com)",
+                "Launched Quiz Island (quizverse2025-v2.web.app)"
+            ]
+        },
+        {
+            "title": "Lead Event Coordinator",
+            "company": "VIP Staffing",
+            "duration": "04/2018 - 12/2024",
+            "description": [
+                "Managed large-scale events with 250+ attendees, achieving 100% client satisfaction rate",
+                "Led cross-functional teams and implemented data-driven logistics optimization"
+            ]
+        },
+        {
+            "title": "Senior Sales Manager",
+            "company": "Momentum",
+            "duration": "03/2021 - 10/2022",
+            "description": [
+                "Generated $2.4M+ in sales revenue, ranking Number 1 in team performance for 6 consecutive months",
+                "Managed 20+ sales professionals, implementing data analytics to improve team performance by 35%"
+            ]
+        }
+    ],
+    "education": [
+        {
+            "school": "Per Scholas",
+            "location": "New York, NY",
+            "degree": "Cybersecurity Training",
+            "duration": "12/2024 - 03/2025",
+            "details": [
+                "Intensive 15-week cybersecurity program",
+                "Network Security, System Administration",
+                "Windows Server, UNIX, Linux, Bash Scripting, IPV4/IPV6, DNS, DHCP, SQL Server, Apache"
+            ]
+        },
+        {
+            "school": "Alexandria Medical School",
+            "degree": "Bachelor of Medicine",
+            "duration": "09/2008 - 10/2016",
+            "gpa": "3.8/4.0",
+            "details": ["Graduated with Honors"]
+        }
+    ],
+    "certifications": [
+        {
+            "name": "CompTIA Network+ Certification",
+            "validity": "11/2024 - 11/2027"
+        },
+        {
+            "name": "CompTIA Security+ Certification",
+            "validity": "12/2024 - 12/2027"
+        }
+    ],
+    "skills": {
+        "programming": [
+            "Python",
+            "JavaScript",
+            "React.js",
+            "Node.js",
+            "HTML5",
+            "CSS3",
+            "Swift",
+            "Express.js",
+            "REST APIs"
+        ],
+        "database_cloud": [
+            "MongoDB",
+            "AWS",
+            "Docker",
+            "CI/CD",
+            "Real-time Data Processing",
+            "Cloud Infrastructure"
+        ],
+        "security": [
+            "HIPAA",
+            "Network Security",
+            "Vulnerability Assessment",
+            "Wireshark",
+            "Metasploit",
+            "Nmap",
+            "Linux"
+        ],
+        "healthcare": [
+            "Medical Systems Integration",
+            "Healthcare APIs",
+            "Patient Data Security",
+            "HIPAA Compliance"
+        ],
+        "ai_ml": [
+            "OpenAI Integration",
+            "Prompt Engineering",
+            "Natural Language Processing",
+            "Data Analytics"
+        ],
+        "tools": [
+            "Git",
+            "GitHub",
+            "VS Code",
+            "Docker",
+            "Kubernetes",
+            "Jenkins",
+            "AWS Services"
+        ],
+        "project_management": [
+            "Agile Methodology",
+            "Scrum",
+            "JIRA",
+            "Technical Documentation",
+            "Team Leadership"
+        ]
+    },
+    "portfolio_projects": [
+        {
+            "name": "AI Portfolio Generator",
+            "url": "instantportfoliogenerator.com",
+            "description": "Resume to Portfolio generator"
+        },
+        {
+            "name": "Security Platform",
+            "url": "cybermaarouf.com",
+            "description": "Comprehensive security tools & training"
+        },
+        {
+            "name": "Product Analytics",
+            "url": "expertosy.com",
+            "description": "AI-powered recommendation engine"
+        },
+        {
+            "name": "Travel Safety",
+            "url": "travelscamnomore.com",
+            "description": "Real-time threat detection platform"
+        },
+        {
+            "name": "Education Tech",
+            "url": "quizverse2025-v2.web.app",
+            "description": "Interactive learning with multiplayer"
+        }
+    ]
+} 
