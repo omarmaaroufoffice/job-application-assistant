@@ -1184,35 +1184,73 @@ class JobApplicationAssistant:
     def execute_single_action(self, action):
         """Execute a single action with precise coordinates and verified real clicks"""
         try:
-            # Execute action...
-            success = True  # Set based on actual execution result
+            action_type = action[0]
+            x, y = action[1], action[2]  # These are now properly scaled coordinates
+            description = action[3]
+            grid_coord = action[4]
             
-            if success:
-                # Update goal state with results
-                results = {
-                    'last_action': action[0],
-                    'last_coordinates': f"{action[1]},{action[2]}",
-                    'last_description': action[3]
-                }
+            print(f"\nExecuting action: {action_type} at {grid_coord} ({x}, {y})")
+            self.widget.update_status(f"Executing: {description}")
+            
+            # Move mouse with increased precision
+            current_x, current_y = pyautogui.position()
+            distance = ((x - current_x) ** 2 + (y - current_y) ** 2) ** 0.5
+            
+            # Adjust duration based on distance
+            duration = min(max(0.3, distance / 1000), 1.0)
+            
+            # Move in two steps for more accuracy
+            mid_x = current_x + (x - current_x) // 2
+            mid_y = current_y + (y - current_y) // 2
+            
+            # First move to midpoint
+            pyautogui.moveTo(mid_x, mid_y, duration=duration/2)
+            time.sleep(0.1)
+            
+            # Then to final position
+            pyautogui.moveTo(x, y, duration=duration/2)
+            time.sleep(0.2)  # Wait for mouse to settle
+            
+            # Verify position
+            final_x, final_y = pyautogui.position()
+            if abs(final_x - x) > 2 or abs(final_y - y) > 2:
+                print(f"Warning: Final position ({final_x}, {final_y}) differs from target ({x}, {y})")
+            
+            # Execute the action
+            if action_type == 'click':
+                pyautogui.click(x, y)
+                time.sleep(0.3)
+            elif action_type == 'type':
+                pyautogui.click(x, y)
+                time.sleep(0.3)
+                text = action[3]  # Text is in the description field for type actions
+                pyautogui.typewrite(text, interval=0.1)
+            
+            # Update goal state with results
+            results = {
+                'last_action': action_type,
+                'last_coordinates': f"{x},{y}",
+                'last_description': description
+            }
+            
+            # Get current step from goal manager
+            current_step = self.goal_manager.get_next_step()
+            if current_step:
+                self.goal_manager.update_state(current_step, results)
                 
-                # Get current step from goal manager
-                current_step = self.goal_manager.get_next_step()
-                if current_step:
-                    self.goal_manager.update_state(current_step, results)
-                    
-                    # Get next suggested action
-                    screenshot = pyautogui.screenshot()
-                    img = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
-                    next_step, action_details = self.goal_manager.suggest_action(img)
-                    
-                    # Update UI with next step
-                    self.widget.update_insights(
-                        f"Action completed successfully!\n\n"
-                        f"Next Step: {next_step}\n"
-                        f"Action Details: {json.dumps(action_details, indent=2)}"
-                    )
+                # Get next suggested action
+                screenshot = pyautogui.screenshot()
+                img = cv2.cvtColor(np.array(screenshot), cv2.COLOR_BGR2RGB)
+                next_step, action_details = self.goal_manager.suggest_action(img)
+                
+                # Update UI with next step
+                self.widget.update_insights(
+                    f"Action completed successfully!\n\n"
+                    f"Next Step: {next_step}\n"
+                    f"Action Details: {json.dumps(action_details, indent=2)}"
+                )
             
-            return success
+            return True
             
         except Exception as e:
             print(f"Error executing action: {e}")
@@ -2407,13 +2445,9 @@ class JobApplicationAssistant:
             
             # Try different patterns to extract JSON
             json_patterns = [
-                # Pattern 1: Between ###ACTIONS_START### and ###ACTIONS_END###
                 r'###ACTIONS_START###\s*(.*?)###ACTIONS_END###',
-                # Pattern 2: Between ###JSON_START### and %%%JSON_END%%%
                 r'###JSON_START###\s*(.*?)%%%JSON_END%%%',
-                # Pattern 3: Just find a JSON object with grid_actions
                 r'\{\s*"grid_actions"\s*:\s*\[.*?\]\s*\}',
-                # Pattern 4: Find any JSON array
                 r'\[\s*\{.*?\}\s*\]'
             ]
             
@@ -2423,7 +2457,6 @@ class JobApplicationAssistant:
                 if match:
                     try:
                         potential_json = match.group(1) if pattern.startswith(r'###') else match.group(0)
-                        # Try to parse it
                         json.loads(potential_json)
                         analysis_json = potential_json
                         print(f"\nSuccessfully extracted JSON using pattern: {pattern[:30]}...")
@@ -2435,17 +2468,14 @@ class JobApplicationAssistant:
                 print("Could not find valid JSON in response")
                 return []
             
-            # Parse the JSON
             try:
                 analysis = json.loads(analysis_json)
-                # If we got a list directly, wrap it in a dict
                 if isinstance(analysis, list):
                     analysis = {"grid_actions": analysis}
             except json.JSONDecodeError as e:
                 print(f"Error parsing JSON: {e}")
                 return []
             
-            # Convert grid-based actions into executable actions
             actions = []
             grid_actions = analysis.get('grid_actions', [])
             
@@ -2460,12 +2490,10 @@ class JobApplicationAssistant:
                         
                         print(f"\nProcessing action: {action_type} at {grid_coord}")
                         
-                        # Skip if missing required fields
                         if not action_type or not grid_coord:
                             print(f"Warning: Skipping action due to missing required fields: {action}")
                             continue
                         
-                        # Get coordinates from grid reference
                         if grid_coord in self.grid_data['points']:
                             point_data = self.grid_data['points'][grid_coord]
                             
@@ -2474,15 +2502,13 @@ class JobApplicationAssistant:
                             raw_y = point_data['y'] if 'y' in point_data else point_data.get('position', {}).get('y')
                             
                             if raw_x is not None and raw_y is not None:
-                                # Convert raw coordinates to scaled coordinates
-                                # For Retina displays, we need to use the raw coordinates directly
-                                # since they are already in actual pixels
-                                x = raw_x
-                                y = raw_y
+                                # Convert raw coordinates to logical coordinates for MacBook Pro Retina
+                                x = int(raw_x / scale_factor)
+                                y = int(raw_y / scale_factor)
                                 
                                 print(f"Coordinate conversion:")
                                 print(f"Raw: ({raw_x}, {raw_y})")
-                                print(f"Using raw coordinates for Retina display")
+                                print(f"Scaled for Retina: ({x}, {y})")
                                 
                                 if action_type == 'type':
                                     text = action.get('text', '')
@@ -2496,7 +2522,6 @@ class JobApplicationAssistant:
                                 print(f"Warning: Could not extract x,y coordinates from point_data: {point_data}")
                         else:
                             print(f"Warning: Grid coordinate {grid_coord} not found in grid data")
-                            # Try to find the closest valid coordinate
                             valid_coord = self._find_closest_valid_coordinate(grid_coord)
                             if valid_coord:
                                 point_data = self.grid_data['points'][valid_coord]
@@ -2504,13 +2529,13 @@ class JobApplicationAssistant:
                                 raw_y = point_data['y'] if 'y' in point_data else point_data.get('position', {}).get('y')
                                 
                                 if raw_x is not None and raw_y is not None:
-                                    # Convert raw coordinates to scaled coordinates
-                                    x = raw_x
-                                    y = raw_y
+                                    # Convert raw coordinates to logical coordinates for MacBook Pro Retina
+                                    x = int(raw_x / scale_factor)
+                                    y = int(raw_y / scale_factor)
                                     
                                     print(f"Coordinate conversion (from closest valid):")
                                     print(f"Raw: ({raw_x}, {raw_y})")
-                                    print(f"Using raw coordinates for Retina display")
+                                    print(f"Scaled for Retina: ({x}, {y})")
                                     
                                     if action_type == 'type':
                                         text = action.get('text', '')
