@@ -537,14 +537,17 @@ class JobApplicationAssistant:
     def capture_screenshot(self):
         """Capture a screenshot and overlay the dense grid"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        screenshot = pyautogui.screenshot()
         
-        # Save original screenshot
-        screenshot_path = os.path.join(
-            self.screenshots_dir, 
-            f"screenshot_{timestamp}.png"
-        )
-        screenshot.save(screenshot_path)
+        # Clean up any existing temporary files
+        temp_files = ['temp_screenshot.png', 'temp_gridded.png', 'temp_annotated.png']
+        for temp_file in temp_files:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+        
+        # Take screenshot and save as temporary file
+        screenshot = pyautogui.screenshot()
+        temp_screenshot_path = 'temp_screenshot.png'
+        screenshot.save(temp_screenshot_path)
         
         # Convert screenshot to numpy array for OpenCV processing
         img = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
@@ -558,103 +561,18 @@ class JobApplicationAssistant:
         screen_width_pixels = int(screen.geometry().width() * scale_factor)
         screen_height_pixels = int(screen.geometry().height() * scale_factor)
         
-        # Calculate cell dimensions
-        main_cell_width = width // 10
-        main_cell_height = height // 10
-        sub_cell_width = main_cell_width // 10
-        sub_cell_height = main_cell_height // 10
+        # Create the gridded overlay
+        gridded_img = self._create_grid_overlay(img, screen_width_pixels, screen_height_pixels)
         
-        # Create overlay
-        overlay = img.copy()
-        
-        # Define colors (BGR format)
-        GRID_COLOR = (0, 255, 0)  # Green for all grid elements
-        
-        # Draw main grid
-        for i in range(11):  # Vertical lines
-            x = i * main_cell_width
-            cv2.line(overlay, (x, 0), (x, height), GRID_COLOR, 1)
-            
-        for i in range(11):  # Horizontal lines
-            y = i * main_cell_height
-            cv2.line(overlay, (0, y), (width, y), GRID_COLOR, 1)
-        
-        # Draw sub-grid and labels
-        for main_row in range(10):
-            for main_col in range(10):
-                # Main cell coordinate
-                main_coord = f"{chr(65 + main_col)}{main_row + 1}"
-                
-                # Calculate main cell boundaries
-                main_x_start = main_col * main_cell_width
-                main_y_start = main_row * main_cell_height
-                
-                # Add main coordinate label
-                label_x = main_x_start + 2  # Reduced from 5
-                label_y = main_y_start + 12  # Reduced from 25
-                # Draw white outline for better visibility
-                cv2.putText(overlay, main_coord,
-                          (label_x, label_y),
-                          cv2.FONT_HERSHEY_SIMPLEX,
-                          0.3, (255, 255, 255), 2)  # Reduced from 0.8
-                # Draw green text
-                cv2.putText(overlay, main_coord,
-                          (label_x, label_y),
-                          cv2.FONT_HERSHEY_SIMPLEX,
-                          0.3, GRID_COLOR, 1)  # Reduced from 0.8
-                
-                # Draw sub-grid
-                for sub_row in range(10):
-                    for sub_col in range(10):
-                        # Calculate sub-cell center position
-                        center_x = main_x_start + (sub_col * sub_cell_width) + (sub_cell_width // 2)
-                        center_y = main_y_start + (sub_row * sub_cell_height) + (sub_cell_height // 2)
-                        
-                        # Draw center point
-                        cv2.circle(overlay, (center_x, center_y), 1, GRID_COLOR, -1)
-                        
-                        # Add sub-coordinate label (every 2nd point)
-                        if sub_col % 2 == 0 and sub_row % 2 == 0:
-                            sub_label = f"{sub_col}{sub_row}"
-                            # Draw white outline
-                            cv2.putText(overlay, sub_label,
-                                      (center_x - 4, center_y - 4),  # Reduced from -8
-                                      cv2.FONT_HERSHEY_SIMPLEX,
-                                      0.2, (255, 255, 255), 1)  # Reduced from 0.3
-                            # Draw green text
-                            cv2.putText(overlay, sub_label,
-                                      (center_x - 4, center_y - 4),  # Reduced from -8
-                                      cv2.FONT_HERSHEY_SIMPLEX,
-                                      0.2, GRID_COLOR, 1)  # Reduced from 0.3
-        
-        # Blend overlay with original image
-        alpha = 0.7
-        cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
-        
-        # Add legend
-        legend_height = 80
-        legend = np.zeros((legend_height, width, 3), dtype=np.uint8)
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        
-        # Add legend text
-        def add_legend_text(text, pos_x, pos_y):
-            cv2.putText(legend, text, (pos_x, pos_y), font, 0.7, (255, 255, 255), 3)  # White outline
-            cv2.putText(legend, text, (pos_x, pos_y), font, 0.7, GRID_COLOR, 1)  # Green text
-        
-        add_legend_text(f"Grid Reference (100x100) - Screen: {screen_width_pixels}x{screen_height_pixels} px", 10, 30)
-        add_legend_text("Main Grid: A1-J10", 10, 60)
-        add_legend_text("Sub-grid: 00-99 per cell", 400, 60)
-        add_legend_text("Format: A1.45 = Cell A1, sub-pos (4,5)", 800, 60)
-        
-        # Combine image with legend
-        img_with_legend = np.vstack([img, legend])
-        
-        # Save the gridded screenshot
+        # Save only the final gridded image
         gridded_path = os.path.join(
             self.screenshots_dir,
-            f"gridded_screenshot_{timestamp}.png"
+            f"analysis_{timestamp}.png"
         )
-        cv2.imwrite(gridded_path, img_with_legend)
+        cv2.imwrite(gridded_path, gridded_img)
+        
+        # Clean up temporary screenshot
+        os.remove(temp_screenshot_path)
         
         return gridded_path, timestamp
 
@@ -1054,13 +972,6 @@ class JobApplicationAssistant:
         if ai_analysis and gridded_img is not None:
             print("\nInitial AI Analysis:", ai_analysis)
             
-            # Save the gridded screenshot that was actually used for analysis
-            gridded_path = os.path.join(
-                self.screenshots_dir,
-                f"gridded_screenshot_{timestamp}.png"
-            )
-            cv2.imwrite(gridded_path, gridded_img)
-            
             # Parse actions and create initial annotation
             current_actions = self.parse_ai_response(ai_analysis)
             if current_actions:
@@ -1069,31 +980,45 @@ class JobApplicationAssistant:
                 max_iterations = 4
                 is_satisfied = False
                 
+                # Keep track of the latest annotated image
+                latest_annotated_path = None
+                
+                # Get screen dimensions and scale factor once
+                screen = self.app.primaryScreen()
+                scale_factor = screen.devicePixelRatio()
+                screen_width = screen.geometry().width()
+                screen_height = screen.geometry().height()
+                
+                # Get image dimensions
+                height, width = gridded_img.shape[:2]
+                
+                # Calculate scaling ratios
+                width_ratio = width / screen_width
+                height_ratio = height / screen_height
+                
                 while verification_iteration < max_iterations and not is_satisfied:
                     verification_iteration += 1
                     print(f"\nVerification Iteration {verification_iteration}/{max_iterations}")
                     
                     # Create annotated version using the gridded image
                     current_annotated_img = gridded_img.copy()
-                    height, width = current_annotated_img.shape[:2]
-                    
-                    # Get screen dimensions and scale factor
-                    screen = self.app.primaryScreen()
-                    scale_factor = screen.devicePixelRatio()
-                    
-                    # Calculate cell dimensions in actual pixels
-                    screen_width = int(screen.geometry().width() * scale_factor)
-                    screen_height = int(screen.geometry().height() * scale_factor)
-                    cell_width = screen_width // 40
-                    cell_height = screen_height // 40
                     
                     # Add annotations for current actions
                     for idx, action in enumerate(current_actions, 1):
                         action_type = action[0]
-                        # Convert logical coordinates to screen coordinates
-                        x = int((action[1] / screen.geometry().width()) * width)
-                        y = int((action[2] / screen.geometry().height()) * height)
+                        
+                        # Convert logical coordinates to image coordinates using scaling ratios
+                        x = int(action[1] * width_ratio)
+                        y = int(action[2] * height_ratio)
                         grid_coord = action[-1]
+                        
+                        # Log coordinate transformation
+                        print(f"\nCoordinate transformation for {grid_coord}:")
+                        print(f"Original coordinates: ({action[1]}, {action[2]})")
+                        print(f"Screen dimensions: {screen_width}x{screen_height}")
+                        print(f"Image dimensions: {width}x{height}")
+                        print(f"Scaling ratios: width={width_ratio}, height={height_ratio}")
+                        print(f"Transformed coordinates: ({x}, {y})")
                         
                         # Use different colors based on iteration
                         if verification_iteration == 1:
@@ -1103,40 +1028,59 @@ class JobApplicationAssistant:
                         else:
                             circle_color = (255, 165, 0)  # Orange for intermediate
                         
-                        # Draw circle at action point
-                        cv2.circle(current_annotated_img, (x, y), 15, circle_color, 2)
+                        # Draw circle at action point with larger radius and thicker outline
+                        cv2.circle(current_annotated_img, (x, y), 20, circle_color, 3)
                         
-                        # Add label with grid coordinate
-                        cv2.putText(current_annotated_img, f"{idx}. {grid_coord}", 
-                                  (x + 25, y - 10), 
-                                  cv2.FONT_HERSHEY_SIMPLEX, 
+                        # Add white background for better text visibility
+                        text = f"{idx}. {grid_coord}"
+                        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                        cv2.rectangle(current_annotated_img,
+                                    (x + 25, y - text_size[1] - 5),
+                                    (x + 25 + text_size[0], y + 5),
+                                    (255, 255, 255),
+                                    -1)
+                        cv2.putText(current_annotated_img, text,
+                                  (x + 25, y),
+                                  cv2.FONT_HERSHEY_SIMPLEX,
                                   0.7, circle_color, 2)
                         
-                        # Add description in the top margin
-                        text = f"{idx}. {action_type.upper()} at {grid_coord}: {action[3]}"
-                        cv2.putText(current_annotated_img, text,
-                                  (10, 50 + 30 * idx), 
+                        # Add description with white background
+                        desc_text = f"{idx}. {action_type.upper()} at {grid_coord}: {action[3]}"
+                        desc_size = cv2.getTextSize(desc_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                        cv2.rectangle(current_annotated_img,
+                                    (10, 50 + 30 * idx - desc_size[1] - 5),
+                                    (10 + desc_size[0], 50 + 30 * idx + 5),
+                                    (255, 255, 255),
+                                    -1)
+                        cv2.putText(current_annotated_img, desc_text,
+                                  (10, 50 + 30 * idx),
                                   cv2.FONT_HERSHEY_SIMPLEX,
                                   0.7, circle_color, 2)
                     
-                    # Add iteration status
+                    # Add iteration status with white background
                     status_text = f"Verification Iteration {verification_iteration}/{max_iterations}"
-                    cv2.putText(current_annotated_img, status_text, 
-                              (10, 30), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 
-                              1.0, (255, 255, 255), 3)  # White outline
-                    cv2.putText(current_annotated_img, status_text, 
-                              (10, 30), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 
-                              1.0, (0, 0, 255), 2)  # Red text
+                    status_size = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 3)[0]
+                    cv2.rectangle(current_annotated_img,
+                                (10, 10),
+                                (10 + status_size[0], 40),
+                                (255, 255, 255),
+                                -1)
+                    cv2.putText(current_annotated_img, status_text,
+                              (10, 30),
+                              cv2.FONT_HERSHEY_SIMPLEX,
+                              1.0, (0, 0, 255), 2)
+                    
+                    # Remove previous annotated image if it exists
+                    if latest_annotated_path and os.path.exists(latest_annotated_path):
+                        os.remove(latest_annotated_path)
                     
                     # Save current iteration's annotated image
-                    current_annotated_path = os.path.join(
+                    latest_annotated_path = os.path.join(
                         self.screenshots_dir,
-                        f"annotated_iter{verification_iteration}_{timestamp}.png"
+                        f"analysis_{timestamp}_iter{verification_iteration}.png"
                     )
-                    cv2.imwrite(current_annotated_path, current_annotated_img)
-                    print(f"\nIteration {verification_iteration} annotated screenshot saved to: {current_annotated_path}")
+                    cv2.imwrite(latest_annotated_path, current_annotated_img)
+                    print(f"\nIteration {verification_iteration} analysis saved to: {latest_annotated_path}")
                     
                     # Convert to PIL for Gemini
                     annotated_pil = Image.fromarray(cv2.cvtColor(current_annotated_img, cv2.COLOR_BGR2RGB))
