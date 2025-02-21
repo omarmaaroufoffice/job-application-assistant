@@ -744,7 +744,7 @@ class FloatingWidget(QMainWindow):
             
             if action_type == 'type':
                 confirmation += f"TYPE at {grid_coord}:\n"
-                confirmation += f"   Text: \"{action[3]}\"\n"
+                confirmation += f"   Text: \"{description}\"\n"
                 confirmation += f"   Purpose: {description}\n"
             else:
                 confirmation += f"{action_type.upper()} at {grid_coord}:\n"
@@ -785,7 +785,7 @@ class FloatingWidget(QMainWindow):
             
             if action_type == 'type':
                 confirmation += f"TYPE at {grid_coord}:\n"
-                confirmation += f"   Text: \"{action[3]}\"\n"
+                confirmation += f"   Text: \"{description}\"\n"
                 confirmation += f"   Purpose: {description}\n"
             else:
                 confirmation += f"{action_type.upper()} at {grid_coord}:\n"
@@ -1216,13 +1216,18 @@ class JobApplicationAssistant:
             if abs(final_x - x) > 2 or abs(final_y - y) > 2:
                 print(f"Warning: Final position ({final_x}, {final_y}) differs from target ({x}, {y})")
             
-            # Execute the action
+            # Execute the action with proper focus handling
             if action_type == 'click':
+                # First click to focus
                 pyautogui.click(x, y)
-                time.sleep(0.3)
+                time.sleep(0.5)  # Wait 0.5 seconds between focus and action
+                # Second click for the actual action
+                pyautogui.click(x, y)
+                time.sleep(0.3)  # Wait for click to register
             elif action_type == 'type':
+                # Focus the field first
                 pyautogui.click(x, y)
-                time.sleep(0.3)
+                time.sleep(0.5)  # Wait 0.5 seconds between focus and typing
                 text = action[3]  # Text is in the description field for type actions
                 pyautogui.typewrite(text, interval=0.1)
             
@@ -2254,9 +2259,21 @@ class JobApplicationAssistant:
             
             # Create analysis prompt with emphasis on ignoring assistant UI
             prompt = """
-            ANALYZE CURRENT STATE AND PROVIDE PRECISE GRID-BASED ACTIONS
+            ANALYZE VISIBLE SCREEN ELEMENTS AND PROVIDE PRECISE GRID-BASED ACTIONS
             
-            !!!!! RESPONSE FORMAT IS CRITICAL !!!!!
+            CRITICAL: DO NOT MAKE ANY ASSUMPTIONS!
+            - Analyze ONLY what is actually visible on the screen
+            - DO NOT assume presence of any specific UI elements
+            - DO NOT generate actions for elements that aren't clearly visible
+
+            
+            COORDINATE PRECISION REQUIREMENTS:
+            1. Use EXACT grid coordinates shown on screen (AA1-ZZ40)
+            2. Verify each coordinate points to a real, visible UI element
+            3. Ensure click/type points are centered on the actual interactive elements
+            4. Double-check all coordinates against the visible grid overlay
+            
+            RESPONSE FORMAT REQUIREMENTS:
             You MUST respond with ONLY this exact format:
 
             ###JSON_START###
@@ -2265,13 +2282,14 @@ class JobApplicationAssistant:
                 {
                   "action": "click",
                   "grid_coord": "AA1",
-                  "description": "Click email input field"
+                  "description": "Actual purpose based on visible element",
+                  "text": null
                 },
                 {
                   "action": "type",
-                  "grid_coord": "AA1",
-                  "text": "example@email.com",
-                  "description": "Type email address"
+                  "grid_coord": "BB2",
+                  "text": "Text to type",
+                  "description": "Actual purpose based on visible field"
                 }
               ]
             }
@@ -2279,24 +2297,18 @@ class JobApplicationAssistant:
 
             NO OTHER TEXT OR FORMATTING IS ALLOWED!
             
-            COORDINATE SYSTEM:
-            - Main Grid: AA1-ZZ40 (marked with blue dots)
-            - Each cell has two letters (AA-ZZ) and number (1-40)
-            - Use EXACT coordinates shown on the grid
-            
-            IMPORTANT RULES:
-            1. IGNORE the AI Assistant interface (floating window with buttons)
-            2. Look ONLY for real application elements (forms, buttons, fields)
+            ANALYSIS REQUIREMENTS:
+            1. IGNORE the AI Assistant interface (floating window)
+            2. Look ONLY for actually visible UI elements
             3. Each action MUST have:
-               - action: "click" or "type"
-               - grid_coord: exact coordinate (e.g., "AA1")
-               - description: clear purpose
-               - text: required for type actions
-            4. Verify each coordinate is:
-               - On a real element (not the assistant)
-               - Precisely centered
-               - Actually interactive
-               - Correct for the action type
+               - Precise grid coordinate matching the overlay
+               - Clear description of the actual visible element
+               - Action type based on the element's visible properties
+            4. For each element, verify:
+               - It is actually visible on screen
+               - It is interactive (button, field, etc.)
+               - The coordinate is precisely centered
+               - The action matches the element type
             
             Current Goal: """ + str(self.goal_manager.current_goal) + """
             Required Action: """ + str(action_details.get('action', 'unknown')) + """
@@ -2346,56 +2358,67 @@ class JobApplicationAssistant:
                         description = action[3]
                         
                         # Draw action marker with enhanced visibility
-                        # Main target circle
-                        cv2.circle(annotated_img, (x, y), 15, (0, 0, 255), 2)  # Red circle
+                        # First draw precise crosshair
+                        line_length = 20
+                        cv2.line(annotated_img, (x-line_length, y), (x+line_length, y), (0, 0, 255), 2)  # Horizontal
+                        cv2.line(annotated_img, (x, y-line_length), (x, y+line_length), (0, 0, 255), 2)  # Vertical
                         
-                        # Precise crosshair
-                        cv2.line(annotated_img, (x-15, y), (x+15, y), (0, 0, 255), 1)  # Horizontal line
-                        cv2.line(annotated_img, (x, y-15), (x, y+15), (0, 0, 255), 1)  # Vertical line
+                        # Draw target circle
+                        cv2.circle(annotated_img, (x, y), 25, (0, 0, 255), 2)  # Outer circle
+                        cv2.circle(annotated_img, (x, y), 3, (0, 0, 255), -1)  # Center dot
                         
-                        # Add label with improved formatting
+                        # Add label with improved visibility
                         action_label = f"{idx}. {action_type.upper()} at {grid_coord}"
                         if action_type == 'type':
                             action_label += f"\nText: \"{description}\""
                         else:
-                            action_label += f"\nAction: {description}"
-                            
-                        # Calculate text position with better spacing
-                        label_x = x + 25
-                        label_y = y - 15 + (idx * 40)  # Increased vertical spacing between labels
+                            action_label += f"\nPurpose: {description}"
                         
-                        # Draw white background for better text visibility
-                        text_size = cv2.getTextSize(action_label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
-                        bg_padding = 5
+                        # Calculate optimal label position to avoid overlap
+                        label_x = x + 35  # Increased offset from point
+                        label_y = y - 20 + (idx * 45)  # More vertical spacing between labels
                         
-                        # Split label into lines for multi-line background
+                        # Draw connecting line from target to label
+                        cv2.line(annotated_img, 
+                                (x + 25, y),
+                                (label_x - 5, label_y + 10),
+                                (0, 0, 255), 2)
+                        
+                        # Split label into lines
                         lines = action_label.split('\n')
-                        line_height = text_size[1] + 5
-                        total_height = line_height * len(lines)
+                        max_line_width = max(cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0][0] for line in lines)
+                        line_height = cv2.getTextSize(lines[0], cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0][1]
                         
-                        # Draw background rectangle for all lines
+                        # Draw white background with black border
+                        padding = 10
+                        bg_top = label_y - line_height - padding
+                        bg_bottom = label_y + (len(lines) * (line_height + 5))
+                        bg_right = label_x + max_line_width + padding
+                        
+                        # White background
                         cv2.rectangle(annotated_img,
-                                    (label_x - bg_padding, label_y - text_size[1] - bg_padding),
-                                    (label_x + text_size[0] + bg_padding, label_y + total_height),
+                                    (label_x - padding, bg_top),
+                                    (bg_right, bg_bottom),
                                     (255, 255, 255),
                                     -1)
                         
+                        # Black border
+                        cv2.rectangle(annotated_img,
+                                    (label_x - padding, bg_top),
+                                    (bg_right, bg_bottom),
+                                    (0, 0, 0),
+                                    1)
+                        
                         # Draw each line of text
-                        for line_idx, line in enumerate(lines):
+                        for i, line in enumerate(lines):
+                            y_offset = i * (line_height + 5)
                             cv2.putText(annotated_img,
                                       line,
-                                      (label_x, label_y + (line_idx * line_height)),
+                                      (label_x, label_y + y_offset),
                                       cv2.FONT_HERSHEY_SIMPLEX,
-                                      0.6,
+                                      0.7,
                                       (0, 0, 255),
                                       2)
-                        
-                        # Add connecting line from target to label
-                        cv2.line(annotated_img,
-                                (x + 15, y),
-                                (label_x - bg_padding, label_y + (total_height // 2)),
-                                (0, 0, 255),
-                                1)
                     
                     # Save annotated screenshot
                     annotated_path = os.path.join(session_dir, "annotated_screenshot.png")
