@@ -306,7 +306,7 @@ class FloatingWidget(QMainWindow):
         self.current_action_index = 0
     
     def on_yes_clicked(self):
-        """Handle Yes button click with verification"""
+        """Handle Yes button click with verification and continuous processing"""
         if self.current_actions and self.current_action_index < len(self.current_actions):
             action = self.current_actions[self.current_action_index]
             
@@ -370,15 +370,60 @@ class FloatingWidget(QMainWindow):
                         
                         if success:
                             self._update_status("Action verified successful")
-                            # Move to next action (which will hide confirmation since we're only showing one at a time)
-                            self.current_action_index += 1
-                            self._hide_confirmation()
                             
-                            # Analyze next action if available
-                            if len(self.assistant.current_actions) > 1:
-                                next_actions = self.assistant.current_actions[1:]
-                                self._update_actions([next_actions[0]])  # Show next action
-                                self._show_confirmation([next_actions[0]])
+                            # Get the next action from the AI
+                            try:
+                                # Take a new screenshot for analysis
+                                new_screenshot = pyautogui.screenshot()
+                                new_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                new_screenshot_path = os.path.join(
+                                    self.assistant.screenshots_dir,
+                                    f"analysis_{new_timestamp}.png"
+                                )
+                                new_screenshot.save(new_screenshot_path)
+                                
+                                # Create gridded image
+                                screen = self.assistant.app.primaryScreen()
+                                scale_factor = screen.devicePixelRatio()
+                                screen_width_pixels = int(screen.geometry().width() * scale_factor)
+                                screen_height_pixels = int(screen.geometry().height() * scale_factor)
+                                
+                                img = cv2.cvtColor(np.array(new_screenshot), cv2.COLOR_RGB2BGR)
+                                gridded_img = self.assistant._create_grid_overlay(img, screen_width_pixels, screen_height_pixels)
+                                
+                                # Save gridded image
+                                cv2.imwrite(new_screenshot_path, gridded_img)
+                                
+                                # Convert to PIL for AI analysis
+                                gridded_pil = Image.fromarray(cv2.cvtColor(gridded_img, cv2.COLOR_BGR2RGB))
+                                
+                                # Get new AI analysis
+                                response = client.models.generate_content(
+                                    model="gemini-2.0-flash",
+                                    contents=[self.assistant._create_analysis_prompt(), gridded_pil]
+                                )
+                                
+                                if response and response.text:
+                                    # Parse new actions
+                                    new_actions = self.assistant.parse_ai_response(response.text)
+                                    if new_actions:
+                                        # Store only the first new action
+                                        self.assistant.current_actions = [new_actions[0]]
+                                        self._update_actions([new_actions[0]])
+                                        self._show_confirmation([new_actions[0]])
+                                        self._update_status("New action suggested")
+                                    else:
+                                        self._update_status("No more actions found")
+                                        self._hide_confirmation()
+                                else:
+                                    self._update_status("No response for new actions")
+                                    self._hide_confirmation()
+                                    
+                            except Exception as e:
+                                print(f"Error getting next action: {e}")
+                                self._update_status("Error getting next action")
+                                self._hide_confirmation()
+                            
                         elif retry:
                             self._update_status("Retrying action...")
                             # Extract new coordinates if provided
@@ -393,22 +438,20 @@ class FloatingWidget(QMainWindow):
                             # Retry the same action
                             self.on_yes_clicked()
                         else:
-                            self._update_status("Action failed, skipping...")
+                            self._update_status("Action failed, getting next action...")
+                            # Try to get next action
                             self.current_action_index += 1
                             self._hide_confirmation()
                     else:
                         self._update_status("Could not verify action")
-                        self.current_action_index += 1
                         self._hide_confirmation()
                 else:
                     self._update_status("No verification response")
-                    self.current_action_index += 1
                     self._hide_confirmation()
                     
             except Exception as e:
                 print(f"Error during verification: {e}")
                 self._update_status("Verification failed")
-                self.current_action_index += 1
                 self._hide_confirmation()
             
             # Clean up verification screenshot
@@ -418,6 +461,7 @@ class FloatingWidget(QMainWindow):
                 pass
         else:
             self._hide_confirmation()
+            self._update_status("All actions completed")
     
     def on_no_clicked(self):
         """Handle No button click"""
