@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 import json
 import re
 from typing import List, Dict, Any
-from pynput import keyboard
+from pynput import keyboard, mouse
 import threading
 import pyperclip
 import cv2
@@ -875,8 +875,43 @@ class JobApplicationAssistant:
         
         return actions
 
+    def verify_click(self, x: int, y: int, retries: int = 3, double_click: bool = True) -> bool:
+        """Verify and ensure a click is performed at the specified coordinates"""
+        mouse_controller = mouse.Controller()
+        
+        for attempt in range(retries):
+            try:
+                # Move to position
+                mouse_controller.position = (x, y)
+                time.sleep(0.1)
+                
+                # Get current position to verify
+                current_x, current_y = mouse_controller.position
+                
+                # Check if we're within 2 pixels of target (accounting for minor OS variations)
+                if abs(current_x - x) <= 2 and abs(current_y - y) <= 2:
+                    # First click for focus
+                    mouse_controller.click(mouse.Button.left)
+                    time.sleep(0.2)  # Increased pause between clicks
+                    
+                    # Second click for activation if needed
+                    if double_click:
+                        mouse_controller.click(mouse.Button.left)
+                        time.sleep(0.1)
+                    
+                    return True
+                else:
+                    print(f"Position mismatch on attempt {attempt + 1}. Target: ({x}, {y}), Actual: ({current_x}, {current_y})")
+                    time.sleep(0.2)  # Wait before retry
+            
+            except Exception as e:
+                print(f"Click verification failed on attempt {attempt + 1}: {e}")
+                time.sleep(0.2)  # Wait before retry
+        
+        return False
+
     def execute_single_action(self, action):
-        """Execute a single action with precise coordinates"""
+        """Execute a single action with precise coordinates and verified real clicks"""
         try:
             x, y = action[1], action[2]
             coord = action[-1]
@@ -884,16 +919,56 @@ class JobApplicationAssistant:
             # Log the action with precise coordinates
             print(f"Executing {action[0]} at {coord} ({x}, {y})")
             
-            # Coordinates are already in logical coordinates (scaled for PyAutoGUI)
             if action[0] in ['click', 'select']:
-                # Move to position with high precision
-                pyautogui.moveTo(x, y, duration=0.1, tween=pyautogui.easeOutQuad)
-                pyautogui.click()
+                # Move to position smoothly first
+                pyautogui.moveTo(x, y, duration=0.2, tween=pyautogui.easeOutQuad)
+                time.sleep(0.3)  # Wait for movement to complete
+                
+                # First click for focus
+                mouse_controller = mouse.Controller()
+                mouse_controller.position = (x, y)
+                time.sleep(0.2)  # Wait for position
+                mouse_controller.click(mouse.Button.left)
+                time.sleep(0.3)  # Wait for focus
+                
+                # Verify position and click again if needed
+                current_x, current_y = mouse_controller.position
+                if abs(current_x - x) <= 2 and abs(current_y - y) <= 2:
+                    mouse_controller.click(mouse.Button.left)
+                else:
+                    print(f"Position verification failed, retrying with PyAutoGUI")
+                    pyautogui.click(x, y)
+                
+                time.sleep(0.3)  # Wait after click
+                
             elif action[0] == 'type':
-                # Move and type with high precision
-                pyautogui.moveTo(x, y, duration=0.1)
-                pyautogui.click()
-                pyautogui.typewrite(action[3], interval=0.05)
+                # Move smoothly and ensure focus first
+                pyautogui.moveTo(x, y, duration=0.2, tween=pyautogui.easeOutQuad)
+                time.sleep(0.3)  # Wait for movement
+                
+                # Initial focus click
+                mouse_controller = mouse.Controller()
+                mouse_controller.position = (x, y)
+                time.sleep(0.2)
+                mouse_controller.click(mouse.Button.left)
+                time.sleep(0.3)  # Wait for focus
+                
+                # Double click for text selection
+                mouse_controller.click(mouse.Button.left)
+                time.sleep(0.1)
+                mouse_controller.click(mouse.Button.left)
+                time.sleep(0.3)  # Wait for double-click to register
+                
+                # Select all existing text
+                if sys.platform == 'darwin':
+                    pyautogui.hotkey('command', 'a')
+                else:
+                    pyautogui.hotkey('ctrl', 'a')
+                time.sleep(0.2)  # Wait for selection
+                
+                # Type the new text with slower interval
+                pyautogui.typewrite(action[3], interval=0.08)  # Slower typing
+                time.sleep(0.3)  # Wait after typing
             
             # Store successful action with detailed coordinates
             self.current_application['grid_positions'][coord] = {
@@ -902,11 +977,26 @@ class JobApplicationAssistant:
                 'coordinates': {'x': x, 'y': y}
             }
             
-            time.sleep(0.2)  # Reduced wait time
+            # Additional wait between actions
+            time.sleep(0.5)
             
         except Exception as e:
             print(f"Error executing action at {coord}: {e}")
             self.widget.update_status(f"Error executing action: {e}")
+            
+            # Attempt recovery with longer delays if action failed
+            try:
+                if action[0] in ['click', 'select']:
+                    print("Attempting recovery with longer delays...")
+                    mouse_controller = mouse.Controller()
+                    pyautogui.moveTo(x, y, duration=0.3)
+                    time.sleep(0.5)  # Longer wait
+                    mouse_controller.position = (x, y)
+                    time.sleep(0.3)
+                    mouse_controller.click(mouse.Button.left)
+                    time.sleep(0.3)
+            except Exception as recovery_error:
+                print(f"Recovery attempt failed: {recovery_error}")
 
     def analyze_job_description(self, job_text: str) -> Dict[str, Any]:
         """Analyze job description to match with user profile"""
@@ -957,11 +1047,12 @@ class JobApplicationAssistant:
         # Get timestamp for file naming
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
+        # Step 1: Initial Analysis
         # Analyze the form and get both the AI response and the gridded image
-        ai_analysis, gridded_img = self.analyze_application_form(None)  # No need for image path now
+        ai_analysis, gridded_img = self.analyze_application_form(None)
         
         if ai_analysis and gridded_img is not None:
-            print("\nAI Analysis:", ai_analysis)
+            print("\nInitial AI Analysis:", ai_analysis)
             
             # Save the gridded screenshot that was actually used for analysis
             gridded_path = os.path.join(
@@ -970,61 +1061,234 @@ class JobApplicationAssistant:
             )
             cv2.imwrite(gridded_path, gridded_img)
             
-            # Process actions in main thread via signal
-            self.widget.signals.process_actions_signal.emit(ai_analysis)
-            
-            # Parse actions and create annotation
-            actions = self.parse_ai_response(ai_analysis)
-            if actions:
-                # Create annotated version using the same gridded image
-                annotated_img = gridded_img.copy()
-                height, width = annotated_img.shape[:2]
+            # Parse actions and create initial annotation
+            current_actions = self.parse_ai_response(ai_analysis)
+            if current_actions:
+                # Initialize verification iteration counter
+                verification_iteration = 0
+                max_iterations = 4
+                is_satisfied = False
                 
-                # Get screen dimensions and scale factor
-                screen = self.app.primaryScreen()
-                scale_factor = screen.devicePixelRatio()
-                
-                # Calculate cell dimensions in actual pixels
-                screen_width = int(screen.geometry().width() * scale_factor)
-                screen_height = int(screen.geometry().height() * scale_factor)
-                cell_width = screen_width // 40
-                cell_height = screen_height // 40
-                
-                # Add annotations for each action
-                for idx, action in enumerate(actions, 1):
-                    action_type = action[0]
-                    # Convert logical coordinates to screen coordinates
-                    x = int((action[1] / screen.geometry().width()) * width)
-                    y = int((action[2] / screen.geometry().height()) * height)
-                    grid_coord = action[-1]
+                while verification_iteration < max_iterations and not is_satisfied:
+                    verification_iteration += 1
+                    print(f"\nVerification Iteration {verification_iteration}/{max_iterations}")
                     
-                    # Draw circle at action point
-                    cv2.circle(annotated_img, (x, y), 15, (0, 0, 255), 2)
+                    # Create annotated version using the gridded image
+                    current_annotated_img = gridded_img.copy()
+                    height, width = current_annotated_img.shape[:2]
                     
-                    # Add label with grid coordinate (offset to not overlap with circle)
-                    cv2.putText(annotated_img, f"{idx}. {grid_coord}", 
-                              (x + 25, y - 10), 
+                    # Get screen dimensions and scale factor
+                    screen = self.app.primaryScreen()
+                    scale_factor = screen.devicePixelRatio()
+                    
+                    # Calculate cell dimensions in actual pixels
+                    screen_width = int(screen.geometry().width() * scale_factor)
+                    screen_height = int(screen.geometry().height() * scale_factor)
+                    cell_width = screen_width // 40
+                    cell_height = screen_height // 40
+                    
+                    # Add annotations for current actions
+                    for idx, action in enumerate(current_actions, 1):
+                        action_type = action[0]
+                        # Convert logical coordinates to screen coordinates
+                        x = int((action[1] / screen.geometry().width()) * width)
+                        y = int((action[2] / screen.geometry().height()) * height)
+                        grid_coord = action[-1]
+                        
+                        # Use different colors based on iteration
+                        if verification_iteration == 1:
+                            circle_color = (0, 0, 255)  # Red for initial
+                        elif verification_iteration == max_iterations:
+                            circle_color = (0, 255, 0)  # Green for final
+                        else:
+                            circle_color = (255, 165, 0)  # Orange for intermediate
+                        
+                        # Draw circle at action point
+                        cv2.circle(current_annotated_img, (x, y), 15, circle_color, 2)
+                        
+                        # Add label with grid coordinate
+                        cv2.putText(current_annotated_img, f"{idx}. {grid_coord}", 
+                                  (x + 25, y - 10), 
+                                  cv2.FONT_HERSHEY_SIMPLEX, 
+                                  0.7, circle_color, 2)
+                        
+                        # Add description in the top margin
+                        text = f"{idx}. {action_type.upper()} at {grid_coord}: {action[3]}"
+                        cv2.putText(current_annotated_img, text,
+                                  (10, 50 + 30 * idx), 
+                                  cv2.FONT_HERSHEY_SIMPLEX,
+                                  0.7, circle_color, 2)
+                    
+                    # Add iteration status
+                    status_text = f"Verification Iteration {verification_iteration}/{max_iterations}"
+                    cv2.putText(current_annotated_img, status_text, 
+                              (10, 30), 
                               cv2.FONT_HERSHEY_SIMPLEX, 
-                              0.7, (0, 0, 255), 2)
+                              1.0, (255, 255, 255), 3)  # White outline
+                    cv2.putText(current_annotated_img, status_text, 
+                              (10, 30), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 
+                              1.0, (0, 0, 255), 2)  # Red text
                     
-                    # Add description in the top margin
-                    text = f"{idx}. {action_type.upper()} at {grid_coord}: {action[3]}"
-                    cv2.putText(annotated_img, text,
-                              (10, 50 + 30 * idx), 
-                              cv2.FONT_HERSHEY_SIMPLEX,
-                              0.7, (0, 0, 255), 2)
+                    # Save current iteration's annotated image
+                    current_annotated_path = os.path.join(
+                        self.screenshots_dir,
+                        f"annotated_iter{verification_iteration}_{timestamp}.png"
+                    )
+                    cv2.imwrite(current_annotated_path, current_annotated_img)
+                    print(f"\nIteration {verification_iteration} annotated screenshot saved to: {current_annotated_path}")
+                    
+                    # Convert to PIL for Gemini
+                    annotated_pil = Image.fromarray(cv2.cvtColor(current_annotated_img, cv2.COLOR_BGR2RGB))
+                    
+                    verification_prompt = f"""
+                    COORDINATE VERIFICATION TASK (Iteration {verification_iteration}/{max_iterations}):
+                    
+                    You are looking at an annotated screenshot that shows proposed click/type locations.
+                    Each action point is marked with a colored circle and numbered.
+                    
+                    Current Actions:
+                    {json.dumps([(a[0], a[-1], a[3]) for a in current_actions], indent=2)}
+                    
+                    Please verify with extra attention to accuracy:
+                    1. Are ALL marked positions precisely aligned with their intended targets?
+                    2. Do ANY coordinates need even slight adjustments?
+                    3. Are there ANY misaligned or incorrect positions?
+                    4. Should ANY actions be added or removed?
+                    5. Is this iteration's result COMPLETELY satisfactory?
+                    
+                    RESPONSE FORMAT:
+                    1. Start with "###VERIFICATION_RESULT###"
+                    2. For each action, indicate:
+                       - CORRECT: Position is perfectly accurate
+                       - ADJUST: Needs adjustment (provide new coordinate)
+                       - REMOVE: Action should be removed
+                    3. End with "###SATISFACTION_STATUS###"
+                    4. State if you are SATISFIED or UNSATISFIED with this iteration
+                    5. End with "###VERIFICATION_END###"
+                    
+                    Example:
+                    ###VERIFICATION_RESULT###
+                    1. CORRECT: Click at AA1 for Submit button
+                    2. ADJUST: Type at BB2 should be BB3 for email field
+                    3. REMOVE: Click at CC3 is not a valid target
+                    ###SATISFACTION_STATUS###
+                    UNSATISFIED: Email field coordinate needs adjustment
+                    ###VERIFICATION_END###
+                    """
+                    
+                    # Generate verification using Gemini AI
+                    verification_response = client.models.generate_content(
+                        model="gemini-2.0-flash",
+                        contents=[verification_prompt, annotated_pil]
+                    )
+                    
+                    if verification_response and verification_response.text:
+                        print(f"\nVerification Analysis (Iteration {verification_iteration}):", verification_response.text)
+                        
+                        # Update insights with iteration status
+                        self.widget.update_insights(
+                            f"Verification Iteration {verification_iteration}/{max_iterations}\n\n" +
+                            verification_response.text
+                        )
+                        
+                        # Parse verification results
+                        verification_text = verification_response.text
+                        if "###VERIFICATION_RESULT###" in verification_text and "###VERIFICATION_END###" in verification_text:
+                            # Extract satisfaction status
+                            satisfaction_match = re.search(r'###SATISFACTION_STATUS###\s*(.*?)\s*###VERIFICATION_END###', 
+                                                        verification_text, re.DOTALL)
+                            is_satisfied = satisfaction_match and "SATISFIED" in satisfaction_match.group(1).upper()
+                            
+                            if is_satisfied:
+                                print(f"\nAI is satisfied with the results after {verification_iteration} iterations")
+                                break
+                            
+                            # Parse verification lines
+                            verification_lines = verification_text.split("###VERIFICATION_RESULT###")[1].split("###SATISFACTION_STATUS###")[0].strip().split("\n")
+                            
+                            # Create adjusted actions list
+                            adjusted_actions = []
+                            for idx, action in enumerate(current_actions):
+                                # Find corresponding verification line
+                                for vline in verification_lines:
+                                    if str(idx + 1) in vline:
+                                        if "CORRECT" in vline:
+                                            adjusted_actions.append(action)
+                                        elif "ADJUST" in vline:
+                                            # Try to extract new coordinate
+                                            new_coord_match = re.search(r'should be ([A-Z]{2}\d+)', vline)
+                                            if new_coord_match:
+                                                new_coord = new_coord_match.group(1)
+                                                # Create adjusted action with new coordinate
+                                                adjusted_action = list(action)
+                                                adjusted_action[-1] = new_coord
+                                                adjusted_actions.append(tuple(adjusted_action))
+                                            else:
+                                                adjusted_actions.append(action)
+                                        # Skip if REMOVE
+                                        break
+                            
+                            # Update current actions for next iteration
+                            current_actions = adjusted_actions
+                    else:
+                        print(f"\nVerification failed on iteration {verification_iteration}")
+                        break
                 
-                # Save annotated image
-                annotated_path = os.path.join(
-                    self.screenshots_dir,
-                    f"annotated_screenshot_{timestamp}.png"
-                )
-                cv2.imwrite(annotated_path, annotated_img)
-                print(f"\nAnnotated screenshot saved to: {annotated_path}")
+                # Create final annotated image with verified actions
+                if current_actions:
+                    final_annotated_img = gridded_img.copy()
+                    
+                    # Add annotations for final verified actions
+                    for idx, action in enumerate(current_actions, 1):
+                        action_type = action[0]
+                        x = int((action[1] / screen.geometry().width()) * width)
+                        y = int((action[2] / screen.geometry().height()) * height)
+                        grid_coord = action[-1]
+                        
+                        # Draw circle at action point (green for final verified)
+                        cv2.circle(final_annotated_img, (x, y), 15, (0, 255, 0), 2)
+                        
+                        # Add label with grid coordinate
+                        cv2.putText(final_annotated_img, f"{idx}. {grid_coord}", 
+                                  (x + 25, y - 10), 
+                                  cv2.FONT_HERSHEY_SIMPLEX, 
+                                  0.7, (0, 255, 0), 2)
+                        
+                        # Add description in the top margin
+                        text = f"{idx}. {action_type.upper()} at {grid_coord}: {action[3]}"
+                        cv2.putText(final_annotated_img, text,
+                                  (10, 50 + 30 * idx), 
+                                  cv2.FONT_HERSHEY_SIMPLEX,
+                                  0.7, (0, 255, 0), 2)
+                    
+                    # Add final verification status
+                    status = "VERIFIED AND SATISFIED" if is_satisfied else "VERIFIED (MAX ITERATIONS)"
+                    cv2.putText(final_annotated_img, f"FINAL ACTIONS - {status}", 
+                              (10, 30), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 
+                              1.0, (0, 255, 0), 2)
+                    
+                    # Save final annotated image
+                    final_annotated_path = os.path.join(
+                        self.screenshots_dir,
+                        f"final_annotated_{timestamp}.png"
+                    )
+                    cv2.imwrite(final_annotated_path, final_annotated_img)
+                    print(f"\nFinal verified screenshot saved to: {final_annotated_path}")
+                    
+                    # Update UI with final verified actions
+                    self.widget.signals.update_actions_signal.emit(current_actions)
+                    self.widget.signals.show_confirmation_signal.emit(current_actions)
+                else:
+                    self.widget.update_status("No valid actions after verification")
+                    self.widget.signals.update_actions_signal.emit([])
+            else:
+                self.widget.update_status("No actionable elements found")
+                self.widget.signals.update_actions_signal.emit([])
         else:
-            self.widget.update_status("No actionable elements found")
+            self.widget.update_status("Analysis failed")
             self.widget.signals.update_actions_signal.emit([])
-            print("No actionable elements found in form")
 
     def on_analyze_job(self):
         """Handle job analysis hotkey"""
@@ -1228,6 +1492,10 @@ class JobApplicationAssistant:
         cv2.putText(canvas, "Main Grid: A1-J10", (margin, legend_y + 30), font, font_scale, (255, 255, 255), 1)
         cv2.putText(canvas, "Sub-grid: 00-99 per cell", (margin + 300, legend_y + 30), font, font_scale, (255, 255, 255), 1)
         cv2.putText(canvas, "Format: A1.45 = Cell A1, sub-pos (4,5)", (margin + 600, legend_y + 30), font, font_scale, (0, 255, 0), 1)
+        
+        # Add visual examples in legend
+        cv2.circle(canvas, (width - 150, 30), 3, (255, 0, 0), -1)  # Example intersection point
+        cv2.line(canvas, (width - 100, 30), (width - 50, 30), (0, 255, 0), 1)  # Example grid line
         
         return canvas
 
