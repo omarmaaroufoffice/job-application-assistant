@@ -205,7 +205,7 @@ class FloatingWidget(QMainWindow):
         super().__init__()
         self.setWindowTitle("AI Assistant")
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
-        self.setGeometry(50, 50, 400, 500)  # Reduced height to 500 for more manageability
+        self.setGeometry(50, 50, 400, 600)  # Increased height to accommodate confirmation
         
         # Initialize conversation history
         self.conversation_history = []
@@ -233,6 +233,81 @@ class FloatingWidget(QMainWindow):
         self.title_bar.setStyleSheet("background-color: #2196F3; color: white; padding: 10px;")
         self.title_bar.setFixedHeight(40)
         self.layout.addWidget(self.title_bar)
+        
+        # Add confirmation section at the top for better visibility
+        confirmation_label = QLabel("Action Confirmation")
+        confirmation_label.setFont(QFont('Arial', 10, QFont.Bold))
+        self.layout.addWidget(confirmation_label)
+        
+        self.confirmation_text = QTextEdit()
+        self.confirmation_text.setReadOnly(True)
+        self.confirmation_text.setMinimumHeight(100)
+        self.confirmation_text.setStyleSheet("""
+            QTextEdit {
+                background-color: #f8f9fa;
+                border: 2px solid #007bff;
+                border-radius: 5px;
+                padding: 10px;
+                font-size: 12pt;
+            }
+        """)
+        self.layout.addWidget(self.confirmation_text)
+        
+        # Add confirmation buttons in a horizontal layout
+        button_layout = QHBoxLayout()
+        
+        self.yes_button = QPushButton("Execute (Y)")
+        self.yes_button.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 5px;
+                font-size: 12pt;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #218838;
+            }
+        """)
+        
+        self.no_button = QPushButton("Skip (N)")
+        self.no_button.setStyleSheet("""
+            QPushButton {
+                background-color: #ffc107;
+                color: black;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 5px;
+                font-size: 12pt;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #e0a800;
+            }
+        """)
+        
+        self.quit_button = QPushButton("Quit")
+        self.quit_button.setStyleSheet("""
+            QPushButton {
+                background-color: #dc3545;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 5px;
+                font-size: 12pt;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #c82333;
+            }
+        """)
+        
+        button_layout.addWidget(self.yes_button)
+        button_layout.addWidget(self.no_button)
+        button_layout.addWidget(self.quit_button)
+        self.layout.addLayout(button_layout)
         
         # Add goal section
         goal_label = QLabel("Current Goal")
@@ -334,74 +409,12 @@ class FloatingWidget(QMainWindow):
         self.annotated_img_label.setFixedHeight(200)  # Adjust as needed
         self.layout.addWidget(self.annotated_img_label)
         
-        # Add confirmation section
-        confirmation_label = QLabel("Action Confirmation")
-        confirmation_label.setFont(QFont('Arial', 10, QFont.Bold))
-        self.layout.addWidget(confirmation_label)
+        # Connect button signals
+        self.yes_button.clicked.connect(self.on_yes_clicked)
+        self.no_button.clicked.connect(self.on_no_clicked)
+        self.quit_button.clicked.connect(self.on_quit_clicked)
         
-        self.confirmation_text = QTextEdit()
-        self.confirmation_text.setReadOnly(True)
-        self.confirmation_text.setMinimumHeight(60)
-        self.confirmation_text.setStyleSheet("""
-            background-color: #f8f9fa;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            padding: 5px;
-        """)
-        self.layout.addWidget(self.confirmation_text)
-        
-        # Add confirmation buttons
-        button_layout = QHBoxLayout()
-        
-        self.yes_button = QPushButton("Execute (Y)")
-        self.yes_button.setStyleSheet("""
-            QPushButton {
-                background-color: #28a745;
-                color: white;
-                border: none;
-                padding: 5px 15px;
-                border-radius: 3px;
-            }
-            QPushButton:hover {
-                background-color: #218838;
-            }
-        """)
-        
-        self.no_button = QPushButton("Skip (N)")
-        self.no_button.setStyleSheet("""
-            QPushButton {
-                background-color: #dc3545;
-                color: white;
-                border: none;
-                padding: 5px 15px;
-                border-radius: 3px;
-            }
-            QPushButton:hover {
-                background-color: #c82333;
-            }
-        """)
-        
-        self.quit_button = QPushButton("Quit")
-        self.quit_button.setStyleSheet("""
-            QPushButton {
-                background-color: #6c757d;
-                color: white;
-                border: none;
-                padding: 5px 15px;
-                border-radius: 3px;
-            }
-            QPushButton:hover {
-                background-color: #5a6268;
-            }
-        """)
-        
-        button_layout.addWidget(self.yes_button)
-        button_layout.addWidget(self.no_button)
-        button_layout.addWidget(self.quit_button)
-        
-        self.layout.addLayout(button_layout)
-        
-        # Hide confirmation section initially
+        # Initially hide confirmation section
         self.confirmation_text.hide()
         self.yes_button.hide()
         self.no_button.hide()
@@ -410,11 +423,6 @@ class FloatingWidget(QMainWindow):
         # Store current actions
         self.current_actions = None
         self.current_action_index = 0
-        
-        # Connect button signals
-        self.yes_button.clicked.connect(self.on_yes_clicked)
-        self.no_button.clicked.connect(self.on_no_clicked)
-        self.quit_button.clicked.connect(self.on_quit_clicked)
         
         # Window dragging
         self.dragging = False
@@ -1019,17 +1027,9 @@ class JobApplicationAssistant:
             
         height, width = img.shape[:2]
         
-        # Get scale factor for display
-        scale_factor = self.app.primaryScreen().devicePixelRatio()
-        
-        # Calculate scaling ratios more precisely
+        # Get screen info
         screen = self.app.primaryScreen()
-        screen_width = screen.geometry().width()
-        screen_height = screen.geometry().height()
-        
-        # Calculate precise scaling ratios accounting for scale factor
-        width_ratio = width / (screen_width * scale_factor)
-        height_ratio = height / (screen_height * scale_factor)
+        scale_factor = screen.devicePixelRatio()
         
         # Create a copy of the image for annotation
         annotated_img = img.copy()
@@ -1039,63 +1039,85 @@ class JobApplicationAssistant:
                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
                    1.0, (0, 0, 255), 2)
         
-        # Add each action to the image with improved coordinate transformation
+        # Add each action to the image with correct coordinate transformation
         for idx, action in enumerate(actions, 1):
             action_type = action[0]
             
-            # Transform coordinates with improved precision
-            x = int(action[1] * scale_factor * width_ratio)
-            y = int(action[2] * scale_factor * height_ratio)
+            # Get the raw coordinates - these are already in logical coordinates
+            x, y = int(action[1]), int(action[2])
             
-            # Get annotation y position (last element in action tuple)
-            annotation_y = int(action[-1] * scale_factor * height_ratio)
+            # Convert logical coordinates to actual screen coordinates
+            screen_x = int(x * scale_factor)
+            screen_y = int(y * scale_factor)
             
             # Ensure coordinates are within bounds
-            x = max(0, min(x, width - 1))
-            y = max(0, min(y, height - 1))
-            annotation_y = max(0, min(annotation_y, height - 1))
+            screen_x = max(0, min(screen_x, width - 1))
+            screen_y = max(0, min(screen_y, height - 1))
             
-            grid_coord = action[-2]  # Grid coordinate is now second to last element
+            grid_coord = action[4]  # Grid coordinate
+            description = action[3]  # Description
             
             # Draw more precise markers
             # First draw a thin crosshair for precise center marking
-            cv2.line(annotated_img, (x-10, y), (x+10, y), (0, 0, 255), 1)
-            cv2.line(annotated_img, (x, y-10), (x, y+10), (0, 0, 255), 1)
+            cv2.line(annotated_img, (screen_x-10, screen_y), (screen_x+10, screen_y), (0, 0, 255), 1)
+            cv2.line(annotated_img, (screen_x, screen_y-10), (screen_x, screen_y+10), (0, 0, 255), 1)
             
             # Then draw the circle
-            cv2.circle(annotated_img, (x, y), 15, (0, 0, 255), 2)
+            cv2.circle(annotated_img, (screen_x, screen_y), 15, (0, 0, 255), 2)
+            cv2.circle(annotated_img, (screen_x, screen_y), 3, (0, 0, 255), -1)  # Center dot
             
-            # Add label with grid coordinate (improved text placement)
-            text = f"{idx}. {grid_coord}"
-            text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+            # Calculate label position with proper scaling
+            label_x = screen_x + 35
+            label_y = screen_y - 20 + (idx * 45)
             
-            # Add white background for better text visibility
+            # Draw connecting line from target to label
+            cv2.line(annotated_img, 
+                    (screen_x + 25, screen_y),
+                    (label_x - 5, label_y + 10),
+                    (0, 0, 255), 2)
+            
+            # Split label into lines for better readability
+            lines = []
+            lines.append(f"{idx}. {action_type.upper()} at {grid_coord}")
+            if action_type == 'type':
+                lines.append(f"Text: \"{description}\"")
+            lines.append(f"Purpose: {description}")
+            
+            # Calculate background size
+            max_line_width = max(cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0][0] for line in lines)
+            line_height = cv2.getTextSize(lines[0], cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0][1]
+            total_height = len(lines) * (line_height + 5)
+            
+            # Draw white background with black border
+            padding = 10
+            bg_top = label_y - line_height - padding
+            bg_bottom = bg_top + total_height + padding * 2
+            bg_right = label_x + max_line_width + padding
+            
+            # White background
             cv2.rectangle(annotated_img,
-                        (x + 25, annotation_y - text_size[1] - 5),
-                        (x + 25 + text_size[0] + 10, annotation_y + 5),
+                        (label_x - padding, bg_top),
+                        (bg_right, bg_bottom),
                         (255, 255, 255),
                         -1)
             
-            cv2.putText(annotated_img, text, 
-                      (x + 30, annotation_y), 
-                      cv2.FONT_HERSHEY_SIMPLEX, 
-                      0.7, (0, 0, 255), 2)
-            
-            # Add description with improved formatting
-            desc_text = f"{idx}. {action_type.upper()} at {grid_coord}: {action[3]}"
-            desc_size = cv2.getTextSize(desc_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-            
-            # Add white background for description
+            # Black border
             cv2.rectangle(annotated_img,
-                        (10, 50 + 30 * idx - desc_size[1] - 5),
-                        (10 + desc_size[0] + 10, 50 + 30 * idx + 5),
-                        (255, 255, 255),
-                        -1)
+                        (label_x - padding, bg_top),
+                        (bg_right, bg_bottom),
+                        (0, 0, 0),
+                        1)
             
-            cv2.putText(annotated_img, desc_text,
-                      (10, 50 + 30 * idx), 
-                      cv2.FONT_HERSHEY_SIMPLEX,
-                      0.7, (0, 0, 255), 2)
+            # Draw each line with proper spacing
+            for i, line in enumerate(lines):
+                y_offset = i * (line_height + 5)
+                cv2.putText(annotated_img,
+                          line,
+                          (label_x, label_y + y_offset),
+                          cv2.FONT_HERSHEY_SIMPLEX,
+                          0.7,
+                          (0, 0, 255),
+                          2)
         
         # Save the annotated image
         output_path = os.path.join(
@@ -1230,30 +1252,81 @@ class JobApplicationAssistant:
                 time.sleep(0.5)  # Wait 0.5 seconds between focus and typing
                 text = action[3]  # Text is in the description field for type actions
                 pyautogui.typewrite(text, interval=0.1)
+                # Press Enter after typing to trigger search
+                time.sleep(0.5)
+                pyautogui.press('enter')
             
-            # Update goal state with results
-            results = {
-                'last_action': action_type,
-                'last_coordinates': f"{x},{y}",
-                'last_description': description
-            }
+            # Wait for any page updates/loading
+            time.sleep(1.0)
             
-            # Get current step from goal manager
-            current_step = self.goal_manager.get_next_step()
-            if current_step:
-                self.goal_manager.update_state(current_step, results)
-                
-                # Get next suggested action
-                screenshot = pyautogui.screenshot()
-                img = cv2.cvtColor(np.array(screenshot), cv2.COLOR_BGR2RGB)
-                next_step, action_details = self.goal_manager.suggest_action(img)
-                
-                # Update UI with next step
-                self.widget.update_insights(
-                    f"Action completed successfully!\n\n"
-                    f"Next Step: {next_step}\n"
-                    f"Action Details: {json.dumps(action_details, indent=2)}"
-                )
+            # Hide widget before taking screenshot
+            self.widget.hide()
+            self.app.processEvents()
+            time.sleep(0.5)
+            
+            # Take new screenshot for analysis
+            screenshot = pyautogui.screenshot()
+            img = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+            
+            # Show widget again
+            self.widget.show()
+            
+            # Get screen dimensions for grid overlay
+            screen = self.app.primaryScreen()
+            scale_factor = screen.devicePixelRatio()
+            screen_width_pixels = int(screen.geometry().width() * scale_factor)
+            screen_height_pixels = int(screen.geometry().height() * scale_factor)
+            
+            # Create gridded screenshot
+            gridded_img = self._create_grid_overlay(img, screen_width_pixels, screen_height_pixels)
+            
+            # Save screenshot with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_path = os.path.join(
+                self.screenshots_dir,
+                f"post_action_{timestamp}.png"
+            )
+            cv2.imwrite(screenshot_path, gridded_img)
+            
+            # Convert to PIL for AI analysis
+            pil_image = Image.fromarray(cv2.cvtColor(gridded_img, cv2.COLOR_BGR2RGB))
+            
+            # Create analysis prompt for next action
+            prompt = self._create_analysis_prompt()
+            
+            # Generate next action analysis
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[prompt, pil_image]
+            )
+            
+            if response and response.text:
+                # Parse next actions
+                next_actions = self._parse_ai_response(response.text)
+                if next_actions:
+                    # Update UI with next actions
+                    self.widget.signals.update_actions_signal.emit(next_actions)
+                    self.widget.signals.show_confirmation_signal.emit(next_actions)
+                    
+                    # Update goal state with results
+                    results = {
+                        'last_action': action_type,
+                        'last_coordinates': f"{x},{y}",
+                        'last_description': description,
+                        'next_actions_found': len(next_actions)
+                    }
+                    
+                    # Get current step from goal manager
+                    current_step = self.goal_manager.get_next_step()
+                    if current_step:
+                        self.goal_manager.update_state(current_step, results)
+                        
+                        # Update UI with next step
+                        self.widget.update_insights(
+                            f"Action completed successfully!\n\n"
+                            f"Next Step: {current_step['step']}\n"
+                            f"Found {len(next_actions)} potential next actions"
+                        )
             
             return True
             
@@ -2229,10 +2302,86 @@ class JobApplicationAssistant:
             session_dir = os.path.join(self.screenshots_dir, f"analysis_session_{timestamp}")
             os.makedirs(session_dir, exist_ok=True)
             
-            # Hide the assistant widget and wait to ensure it's fully hidden
+            # Initialize plan tracking
+            self.current_plan = {
+                'actions': [],
+                'current_index': 0,
+                'verification_results': [],
+                'session_dir': session_dir,
+                'timestamp': timestamp
+            }
+            
+            # Create initial plan
+            initial_plan = self._create_and_analyze_plan(session_dir, action_details)
+            if not initial_plan:
+                self.widget.update_status("Could not create initial plan")
+                return
+                
+            self.current_plan['actions'] = initial_plan
+            
+            # Show initial plan to user
+            self._display_current_plan("Initial Plan Created", initial_plan)
+            
+            # Process one action at a time with verification
+            while self.current_plan['current_index'] < len(self.current_plan['actions']):
+                current_action = self.current_plan['actions'][self.current_plan['current_index']]
+                
+                # Show current action for confirmation
+                self.widget.signals.update_actions_signal.emit([current_action])
+                self.widget.signals.show_confirmation_signal.emit([current_action])
+                
+                # Wait for user confirmation and action execution
+                # (This happens in execute_single_action)
+                
+                # After action execution, verify and update plan
+                verification_result = self._verify_and_update_plan()
+                
+                if verification_result['status'] == 'success':
+                    # Action successful, move to next action
+                    self.current_plan['current_index'] += 1
+                    self._display_current_plan("Action Successful - Continuing Plan", 
+                                            self.current_plan['actions'][self.current_plan['current_index']:])
+                elif verification_result['status'] == 'failed':
+                    # Action failed, need to replan
+                    new_plan = self._create_and_analyze_plan(session_dir, action_details, 
+                                                           failed_action=current_action)
+                    if new_plan:
+                        self.current_plan['actions'] = new_plan
+                        self.current_plan['current_index'] = 0
+                        self._display_current_plan("Plan Updated After Failure", new_plan)
+                    else:
+                        self.widget.update_status("Could not create new plan after failure")
+                        break
+                elif verification_result['status'] == 'needs_adjustment':
+                    # Action needs adjustment, update current action and retry
+                    if verification_result.get('adjusted_action'):
+                        self.current_plan['actions'][self.current_plan['current_index']] = verification_result['adjusted_action']
+                        self._display_current_plan("Action Adjusted - Retrying", 
+                                                [verification_result['adjusted_action']])
+                    else:
+                        self.widget.update_status("Could not adjust action")
+                        break
+                
+                # Store verification result
+                self.current_plan['verification_results'].append(verification_result)
+                
+            # Plan completed or terminated
+            self.widget.update_status("Plan execution completed")
+            
+        except Exception as e:
+            print(f"Error in analyze_current_state: {e}")
+            self.widget.update_status(f"Analysis failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def _create_and_analyze_plan(self, session_dir: str, action_details: Dict[str, Any], 
+                                failed_action: Optional[tuple] = None) -> List[tuple]:
+        """Create and analyze a new plan based on current screen state"""
+        try:
+            # Hide the assistant widget and wait
             self.widget.hide()
-            self.app.processEvents()  # Process any pending UI events
-            time.sleep(0.5)  # Wait to ensure widget is fully hidden
+            self.app.processEvents()
+            time.sleep(0.5)
             
             # Take screenshot without the assistant UI
             screenshot = pyautogui.screenshot()
@@ -2249,199 +2398,220 @@ class JobApplicationAssistant:
             
             # Create and save gridded screenshot
             gridded_img = self._create_grid_overlay(img, screen_width_pixels, screen_height_pixels)
-            gridded_path = os.path.join(session_dir, "gridded_screenshot.png")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            gridded_path = os.path.join(session_dir, f"gridded_screenshot_{timestamp}.png")
             cv2.imwrite(gridded_path, gridded_img)
-            print(f"\nSaved gridded screenshot to: {gridded_path}")
             
-            # Convert gridded image to PIL for AI analysis
+            # Convert to PIL for AI analysis
             pil_image = Image.fromarray(cv2.cvtColor(gridded_img, cv2.COLOR_BGR2RGB))
-            print("DEBUG: Feeding gridded screenshot (with overlay) to AI model.")
             
-            # Create analysis prompt with emphasis on ignoring assistant UI
-            prompt = """
-            ANALYZE VISIBLE SCREEN ELEMENTS AND PROVIDE PRECISE GRID-BASED ACTIONS
+            # Create analysis prompt
+            prompt = self._create_planning_prompt(action_details, failed_action)
             
-            CRITICAL: DO NOT MAKE ANY ASSUMPTIONS!
-            - Analyze ONLY what is actually visible on the screen
-            - DO NOT assume presence of any specific UI elements
-            - DO NOT generate actions for elements that aren't clearly visible
-
-            
-            COORDINATE PRECISION REQUIREMENTS:
-            1. Use EXACT grid coordinates shown on screen (AA1-ZZ40)
-            2. Verify each coordinate points to a real, visible UI element
-            3. Ensure click/type points are centered on the actual interactive elements
-            4. Double-check all coordinates against the visible grid overlay
-            
-            RESPONSE FORMAT REQUIREMENTS:
-            You MUST respond with ONLY this exact format:
-
-            ###JSON_START###
-            {
-              "grid_actions": [
-                {
-                  "action": "click",
-                  "grid_coord": "AA1",
-                  "description": "Actual purpose based on visible element",
-                  "text": null
-                },
-                {
-                  "action": "type",
-                  "grid_coord": "BB2",
-                  "text": "Text to type",
-                  "description": "Actual purpose based on visible field"
-                }
-              ]
-            }
-            %%%JSON_END%%%
-
-            NO OTHER TEXT OR FORMATTING IS ALLOWED!
-            
-            ANALYSIS REQUIREMENTS:
-            1. IGNORE the AI Assistant interface (floating window)
-            2. Look ONLY for actually visible UI elements
-            3. Each action MUST have:
-               - Precise grid coordinate matching the overlay
-               - Clear description of the actual visible element
-               - Action type based on the element's visible properties
-            4. For each element, verify:
-               - It is actually visible on screen
-               - It is interactive (button, field, etc.)
-               - The coordinate is precisely centered
-               - The action matches the element type
-            
-            Current Goal: """ + str(self.goal_manager.current_goal) + """
-            Required Action: """ + str(action_details.get('action', 'unknown')) + """
-            Target Location: """ + str(action_details.get('location', 'unknown')) + """
-            Expected Outcome: """ + str(action_details.get('expected_outcome', 'unknown')) + """
-            """
-            
-            # Generate analysis using the gridded screenshot
+            # Generate analysis
             response = client.models.generate_content(
                 model="gemini-2.0-flash",
                 contents=[prompt, pil_image]
             )
             
             if response and response.text:
-                # Save AI response
-                response_path = os.path.join(session_dir, "ai_response.txt")
-                with open(response_path, 'w') as f:
-                    f.write(response.text)
-                print(f"Saved AI response to: {response_path}")
-                
-                # Parse actions
+                # Parse actions from response
                 actions = self._parse_ai_response(response.text)
-                print("DEBUG: Proposed actions:", actions)
                 
-                # Save proposed actions
-                proposed_actions_file = os.path.join(session_dir, "proposed_actions.txt")
-                with open(proposed_actions_file, "w") as f:
-                    if actions:
-                        for action in actions:
-                            f.write(str(action) + "\n")
-                    else:
-                        f.write("No actions created from response.\n")
-                print(f"Saved proposed actions to: {proposed_actions_file}")
-                
-                # Create and save annotated screenshot using the gridded image
                 if actions:
-                    annotated_img = cv2.imread(gridded_path)
-                    if annotated_img is None:
-                        print("Warning: Could not read gridded screenshot for annotation")
-                        annotated_img = img.copy()
-                    
-                    # Add annotations
-                    for idx, action in enumerate(actions, 1):
-                        action_type = action[0]
-                        x, y = int(action[1]), int(action[2])
-                        grid_coord = action[4]
-                        description = action[3]
-                        
-                        # Draw action marker with enhanced visibility
-                        # First draw precise crosshair
-                        line_length = 20
-                        cv2.line(annotated_img, (x-line_length, y), (x+line_length, y), (0, 0, 255), 2)  # Horizontal
-                        cv2.line(annotated_img, (x, y-line_length), (x, y+line_length), (0, 0, 255), 2)  # Vertical
-                        
-                        # Draw target circle
-                        cv2.circle(annotated_img, (x, y), 25, (0, 0, 255), 2)  # Outer circle
-                        cv2.circle(annotated_img, (x, y), 3, (0, 0, 255), -1)  # Center dot
-                        
-                        # Add label with improved visibility
-                        action_label = f"{idx}. {action_type.upper()} at {grid_coord}"
-                        if action_type == 'type':
-                            action_label += f"\nText: \"{description}\""
-                        else:
-                            action_label += f"\nPurpose: {description}"
-                        
-                        # Calculate optimal label position to avoid overlap
-                        label_x = x + 35  # Increased offset from point
-                        label_y = y - 20 + (idx * 45)  # More vertical spacing between labels
-                        
-                        # Draw connecting line from target to label
-                        cv2.line(annotated_img, 
-                                (x + 25, y),
-                                (label_x - 5, label_y + 10),
-                                (0, 0, 255), 2)
-                        
-                        # Split label into lines
-                        lines = action_label.split('\n')
-                        max_line_width = max(cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0][0] for line in lines)
-                        line_height = cv2.getTextSize(lines[0], cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0][1]
-                        
-                        # Draw white background with black border
-                        padding = 10
-                        bg_top = label_y - line_height - padding
-                        bg_bottom = label_y + (len(lines) * (line_height + 5))
-                        bg_right = label_x + max_line_width + padding
-                        
-                        # White background
-                        cv2.rectangle(annotated_img,
-                                    (label_x - padding, bg_top),
-                                    (bg_right, bg_bottom),
-                                    (255, 255, 255),
-                                    -1)
-                        
-                        # Black border
-                        cv2.rectangle(annotated_img,
-                                    (label_x - padding, bg_top),
-                                    (bg_right, bg_bottom),
-                                    (0, 0, 0),
-                                    1)
-                        
-                        # Draw each line of text
-                        for i, line in enumerate(lines):
-                            y_offset = i * (line_height + 5)
-                            cv2.putText(annotated_img,
-                                      line,
-                                      (label_x, label_y + y_offset),
-                                      cv2.FONT_HERSHEY_SIMPLEX,
-                                      0.7,
-                                      (0, 0, 255),
-                                      2)
-                    
-                    # Save annotated screenshot
-                    annotated_path = os.path.join(session_dir, "annotated_screenshot.png")
-                    cv2.imwrite(annotated_path, annotated_img)
-                    print(f"Saved annotated screenshot to: {annotated_path}")
-                    
-                    # Update UI with annotated image
+                    # Create and save annotated screenshot
+                    annotated_path = self.annotate_screenshot(gridded_path, actions, timestamp)
                     self.widget.update_annotated_image(annotated_path)
-                
-                # Update UI with actions
-                print("\nCreated actions:")
-                for action in actions:
-                    print(f"Action: {action}")
-                self.widget.signals.update_actions_signal.emit(actions)
-                self.widget.signals.show_confirmation_signal.emit(actions)
-            else:
-                self.widget.update_status("No analysis response received")
+                    
+                    return actions
+            
+            return []
             
         except Exception as e:
-            print(f"Error analyzing current state: {e}")
-            self.widget.update_status(f"Analysis failed: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            print(f"Error creating plan: {e}")
+            return []
+
+    def _verify_and_update_plan(self) -> Dict[str, Any]:
+        """Verify the last executed action and determine if plan needs updating"""
+        try:
+            # Take verification screenshot
+            self.widget.hide()
+            self.app.processEvents()
+            time.sleep(0.5)
+            
+            screenshot = pyautogui.screenshot()
+            img = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+            
+            self.widget.show()
+            
+            # Create gridded verification screenshot
+            screen = self.app.primaryScreen()
+            scale_factor = screen.devicePixelRatio()
+            screen_width_pixels = int(screen.geometry().width() * scale_factor)
+            screen_height_pixels = int(screen.geometry().height() * scale_factor)
+            
+            gridded_img = self._create_grid_overlay(img, screen_width_pixels, screen_height_pixels)
+            
+            # Save verification screenshot
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            verification_path = os.path.join(
+                self.current_plan['session_dir'],
+                f"verification_{timestamp}.png"
+            )
+            cv2.imwrite(verification_path, gridded_img)
+            
+            # Convert to PIL for AI analysis
+            pil_image = Image.fromarray(cv2.cvtColor(gridded_img, cv2.COLOR_BGR2RGB))
+            
+            # Create verification prompt
+            current_action = self.current_plan['actions'][self.current_plan['current_index']]
+            prompt = self._create_verification_prompt(current_action)
+            
+            # Generate verification analysis
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[prompt, pil_image]
+            )
+            
+            if response and response.text:
+                # Parse verification result
+                result = self._parse_verification_response(response.text, current_action)
+                
+                # Save verification result
+                result_path = os.path.join(
+                    self.current_plan['session_dir'],
+                    f"verification_result_{timestamp}.json"
+                )
+                with open(result_path, 'w') as f:
+                    json.dump(result, f, indent=2)
+                
+                return result
+            
+            return {'status': 'failed', 'reason': 'No verification response'}
+            
+        except Exception as e:
+            print(f"Error in verification: {e}")
+            return {'status': 'failed', 'reason': str(e)}
+
+    def _create_planning_prompt(self, action_details: Dict[str, Any], 
+                              failed_action: Optional[tuple] = None) -> str:
+        """Create prompt for planning analysis"""
+        base_prompt = self._create_analysis_prompt()  # Use existing analysis prompt as base
+        
+        # Add planning-specific instructions
+        planning_context = f"""
+        PLANNING REQUIREMENTS:
+        1. Create a sequential plan of actions
+        2. Each action must be achievable and verifiable
+        3. Consider dependencies between actions
+        4. Account for possible state changes
+        
+        Current Goal: {self.goal_manager.current_goal}
+        Action Required: {action_details.get('action')}
+        Expected Outcome: {action_details.get('expected_outcome')}
+        """
+        
+        if failed_action:
+            planning_context += f"""
+            Previous Action Failed:
+            - Type: {failed_action[0]}
+            - Location: {failed_action[4]}
+            - Purpose: {failed_action[3]}
+            
+            Please analyze why the action might have failed and provide an alternative approach.
+            """
+        
+        return base_prompt + "\n" + planning_context
+
+    def _create_verification_prompt(self, action: tuple) -> str:
+        """Create prompt for verification analysis"""
+        return f"""
+        VERIFY ACTION RESULT
+        
+        Action Executed:
+        - Type: {action[0]}
+        - Location: {action[4]}
+        - Purpose: {action[3]}
+        
+        Please analyze the current screen state and verify:
+        1. Was the action successful?
+        2. Did it achieve its intended purpose?
+        3. Are there any unexpected changes?
+        4. Does the plan need to be adjusted?
+        
+        Respond in this format:
+        ###VERIFICATION_START###
+        {{
+            "status": "success|failed|needs_adjustment",
+            "details": "Detailed explanation",
+            "next_action": {{
+                "type": "continue|retry|adjust|replan",
+                "reason": "Explanation"
+            }},
+            "adjusted_action": {{
+                // Only if status is needs_adjustment
+                "action": "click|type",
+                "grid_coord": "AA1",
+                "description": "New description",
+                "text": "Text if type action"
+            }}
+        }}
+        ###VERIFICATION_END###
+        """
+
+    def _parse_verification_response(self, response_text: str, current_action: tuple) -> Dict[str, Any]:
+        """Parse the verification response"""
+        try:
+            # Extract JSON from response
+            match = re.search(r'###VERIFICATION_START###\s*(.*?)###VERIFICATION_END###', 
+                            response_text, re.DOTALL)
+            if not match:
+                return {'status': 'failed', 'reason': 'Could not parse verification response'}
+            
+            verification = json.loads(match.group(1))
+            
+            # If adjustment needed, parse new action
+            if verification['status'] == 'needs_adjustment' and 'adjusted_action' in verification:
+                adj = verification['adjusted_action']
+                # Convert to action tuple format
+                if adj['action'] == 'type':
+                    adjusted_action = ('type', current_action[1], current_action[2], 
+                                     adj['text'], adj['grid_coord'], adj['description'])
+                else:
+                    adjusted_action = (adj['action'], current_action[1], current_action[2],
+                                     adj['description'], adj['grid_coord'])
+                verification['adjusted_action'] = adjusted_action
+            
+            return verification
+            
+        except Exception as e:
+            print(f"Error parsing verification: {e}")
+            return {'status': 'failed', 'reason': str(e)}
+
+    def _display_current_plan(self, status: str, actions: List[tuple]):
+        """Display current plan status and remaining actions"""
+        try:
+            # Update status
+            self.widget.update_status(status)
+            
+            # Create plan display text
+            plan_text = f"Current Plan Status: {status}\n\n"
+            plan_text += "Remaining Actions:\n"
+            
+            for idx, action in enumerate(actions, 1):
+                action_type = action[0]
+                grid_coord = action[4]
+                description = action[3]
+                
+                plan_text += f"{idx}. {action_type.upper()} at {grid_coord}\n"
+                plan_text += f"   Purpose: {description}\n\n"
+            
+            # Update insights with plan
+            self.widget.update_insights(plan_text)
+            
+        except Exception as e:
+            print(f"Error displaying plan: {e}")
+            self.widget.update_status("Error displaying plan")
 
     def _parse_ai_response(self, response_text: str) -> List[tuple]:
         """Parse the AI response and extract actions with proper scaling"""
@@ -2510,69 +2680,105 @@ class JobApplicationAssistant:
             if isinstance(grid_actions, list):
                 for action in grid_actions:
                     if isinstance(action, dict):
-                        action_type = action.get('action', '').lower()
+                        # Extract action type from either recommended_action or element_type
+                        action_type = None
+                        text = None
+                        
+                        # Parse recommended_action if present
+                        recommended_action = action.get('recommended_action', '')
+                        if recommended_action:
+                            # Extract action type and text from recommended_action
+                            action_parts = recommended_action.split()
+                            if action_parts:
+                                action_type = action_parts[0].lower()
+                                if action_type == 'type':
+                                    # Try multiple patterns to extract text
+                                    text_patterns = [
+                                        r'type\s+"([^"]+)"',  # Text in quotes
+                                        r'type\s+([^\s]+)\s+(?:in|at|into)',  # Text before in/at/into
+                                        r'type\s+(.+?)(?:\s+in|\s+at|\s+into|$)'  # Any text until in/at/into or end
+                                    ]
+                                    for pattern in text_patterns:
+                                        text_match = re.search(pattern, recommended_action, re.IGNORECASE)
+                                        if text_match:
+                                            text = text_match.group(1)
+                                            break
+                                    
+                                    # If no text found, take everything after TYPE
+                                    if not text and len(action_parts) > 1:
+                                        text = ' '.join(action_parts[1:]).strip()
+                                        # Remove trailing "in", "at", "into" if present
+                                        text = re.sub(r'\s+(?:in|at|into)\s+.*$', '', text, flags=re.IGNORECASE)
+                        
+                        # If no action type found in recommended_action, use element_type
+                        if not action_type:
+                            element_type = action.get('element_type', '').lower()
+                            if element_type == 'text_field':
+                                action_type = 'type'
+                            elif element_type in ['button', 'link', 'checkbox', 'radio']:
+                                action_type = 'click'
+                        
+                        # Get text from action if not already set
+                        if action_type == 'type' and not text:
+                            text = action.get('text', '')  # Try to get text from action directly
+                        
                         grid_coord = action.get('grid_coord', '')
                         description = action.get('description', '')
                         
                         print(f"\nProcessing action: {action_type} at {grid_coord}")
+                        print(f"Text (if type action): {text}")
                         
                         if not action_type or not grid_coord:
                             print(f"Warning: Skipping action due to missing required fields: {action}")
                             continue
                         
+                        # Handle grid coordinates with proper validation
                         if grid_coord in self.grid_data['points']:
                             point_data = self.grid_data['points'][grid_coord]
-                            
-                            # Get raw coordinates
-                            raw_x = point_data['x'] if 'x' in point_data else point_data.get('position', {}).get('x')
-                            raw_y = point_data['y'] if 'y' in point_data else point_data.get('position', {}).get('y')
-                            
-                            if raw_x is not None and raw_y is not None:
-                                # Convert raw coordinates to logical coordinates for MacBook Pro Retina
-                                x = int(raw_x / scale_factor)
-                                y = int(raw_y / scale_factor)
-                                
-                                print(f"Coordinate conversion:")
-                                print(f"Raw: ({raw_x}, {raw_y})")
-                                print(f"Scaled for Retina: ({x}, {y})")
-                                
-                                if action_type == 'type':
-                                    text = action.get('text', '')
-                                    if not text:
-                                        print(f"Warning: Skipping type action due to missing text: {action}")
-                                        continue
-                                    actions.append(('type', x, y, text, grid_coord, description, y))
-                                else:  # click or other actions
-                                    actions.append((action_type, x, y, description, grid_coord, y))
-                            else:
-                                print(f"Warning: Could not extract x,y coordinates from point_data: {point_data}")
                         else:
                             print(f"Warning: Grid coordinate {grid_coord} not found in grid data")
-                            valid_coord = self._find_closest_valid_coordinate(grid_coord)
-                            if valid_coord:
-                                point_data = self.grid_data['points'][valid_coord]
-                                raw_x = point_data['x'] if 'x' in point_data else point_data.get('position', {}).get('x')
-                                raw_y = point_data['y'] if 'y' in point_data else point_data.get('position', {}).get('y')
-                                
-                                if raw_x is not None and raw_y is not None:
-                                    # Convert raw coordinates to logical coordinates for MacBook Pro Retina
-                                    x = int(raw_x / scale_factor)
-                                    y = int(raw_y / scale_factor)
-                                    
-                                    print(f"Coordinate conversion (from closest valid):")
-                                    print(f"Raw: ({raw_x}, {raw_y})")
-                                    print(f"Scaled for Retina: ({x}, {y})")
-                                    
-                                    if action_type == 'type':
-                                        text = action.get('text', '')
-                                        if not text:
-                                            print(f"Warning: Skipping type action due to missing text: {action}")
-                                            continue
-                                        actions.append(('type', x, y, text, valid_coord, description, y))
-                                    else:
-                                        actions.append((action_type, x, y, description, valid_coord, y))
+                            # Parse the invalid coordinate
+                            match = re.match(r'([A-Z]{2})(\d+)(?:\.(\d{2}))?', grid_coord)
+                            if match:
+                                letters, number, subgrid = match.groups()
+                                # Convert letters to column index (AA=0, AB=1, etc.)
+                                col = (ord(letters[0]) - 65) * 26 + (ord(letters[1]) - 65)
+                                # Ensure row is within bounds
+                                row = min(max(1, int(number)), 40)
+                                # Create valid coordinate
+                                valid_coord = f"{letters}{row}"
+                                if valid_coord in self.grid_data['points']:
+                                    point_data = self.grid_data['points'][valid_coord]
+                                    print(f"Using closest valid coordinate: {valid_coord}")
                                 else:
-                                    print(f"Warning: Could not extract x,y coordinates from point_data: {point_data}")
+                                    print(f"Warning: Could not find valid coordinate for {grid_coord}")
+                                    continue
+                            else:
+                                print(f"Warning: Invalid coordinate format: {grid_coord}")
+                                continue
+                        
+                        # Get raw coordinates
+                        raw_x = point_data['x'] if 'x' in point_data else point_data.get('position', {}).get('x')
+                        raw_y = point_data['y'] if 'y' in point_data else point_data.get('position', {}).get('y')
+                        
+                        if raw_x is not None and raw_y is not None:
+                            # Convert raw coordinates to logical coordinates for MacBook Pro Retina
+                            x = int(raw_x / scale_factor)
+                            y = int(raw_y / scale_factor)
+                            
+                            print(f"Coordinate conversion:")
+                            print(f"Raw: ({raw_x}, {raw_y})")
+                            print(f"Scaled for Retina: ({x}, {y})")
+                            
+                            if action_type == 'type':
+                                if text:  # Only add type action if we have text
+                                    actions.append(('type', x, y, text, grid_coord, description))
+                                else:
+                                    print(f"Warning: Skipping type action due to missing text: {action}")
+                            else:  # click or other actions
+                                actions.append((action_type, x, y, description, grid_coord))
+                        else:
+                            print(f"Warning: Could not extract x,y coordinates from point_data: {point_data}")
             
             print(f"\nCreated {len(actions)} actions")
             return actions
