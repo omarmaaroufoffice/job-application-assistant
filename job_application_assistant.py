@@ -490,49 +490,110 @@ class JobApplicationAssistant:
 
     def annotate_screenshot(self, image_path: str, actions: List[tuple], timestamp: str) -> str:
         """Annotate screenshot with planned actions"""
+        # Read the input image
         img = cv2.imread(image_path)
+        if img is None:
+            raise ValueError(f"Could not read image from {image_path}")
+            
         height, width = img.shape[:2]
         
         # Get scale factor for display
         scale_factor = self.app.primaryScreen().devicePixelRatio()
         
+        # Calculate scaling ratios more precisely
+        screen = self.app.primaryScreen()
+        screen_width = screen.geometry().width()
+        screen_height = screen.geometry().height()
+        
+        # Calculate precise scaling ratios accounting for scale factor
+        width_ratio = width / (screen_width * scale_factor)
+        height_ratio = height / (screen_height * scale_factor)
+        
+        # Create a copy of the image for annotation
+        annotated_img = img.copy()
+        
         # Add title and timestamp
-        cv2.putText(img, "Detected Actions:", 
+        cv2.putText(annotated_img, "Detected Actions:", 
                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
                    1.0, (0, 0, 255), 2)
         
-        # Add each action to the image
+        # Add each action to the image with improved coordinate transformation
         for idx, action in enumerate(actions, 1):
             action_type = action[0]
             
-            # Convert logical coordinates to screen coordinates for display
-            x = int(action[1] * scale_factor)
-            y = int(action[2] * scale_factor)
-            grid_coord = action[-1]
+            # Transform coordinates with improved precision
+            x = int(action[1] * scale_factor * width_ratio)
+            y = int(action[2] * scale_factor * height_ratio)
             
-            # Draw circle at action point
-            cv2.circle(img, (x, y), 15, (0, 0, 255), 2)
+            # Get annotation y position (last element in action tuple)
+            annotation_y = int(action[-1] * scale_factor * height_ratio)
             
-            # Add label with grid coordinate (offset to not overlap with circle)
-            cv2.putText(img, f"{idx}. {grid_coord}", 
-                      (x + 25, y - 10), 
+            # Ensure coordinates are within bounds
+            x = max(0, min(x, width - 1))
+            y = max(0, min(y, height - 1))
+            annotation_y = max(0, min(annotation_y, height - 1))
+            
+            grid_coord = action[-2]  # Grid coordinate is now second to last element
+            
+            # Draw more precise markers
+            # First draw a thin crosshair for precise center marking
+            cv2.line(annotated_img, (x-10, y), (x+10, y), (0, 0, 255), 1)
+            cv2.line(annotated_img, (x, y-10), (x, y+10), (0, 0, 255), 1)
+            
+            # Then draw the circle
+            cv2.circle(annotated_img, (x, y), 15, (0, 0, 255), 2)
+            
+            # Add label with grid coordinate (improved text placement)
+            text = f"{idx}. {grid_coord}"
+            text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+            
+            # Add white background for better text visibility
+            cv2.rectangle(annotated_img,
+                        (x + 25, annotation_y - text_size[1] - 5),
+                        (x + 25 + text_size[0] + 10, annotation_y + 5),
+                        (255, 255, 255),
+                        -1)
+            
+            cv2.putText(annotated_img, text, 
+                      (x + 30, annotation_y), 
                       cv2.FONT_HERSHEY_SIMPLEX, 
                       0.7, (0, 0, 255), 2)
             
-            # Add description in the top margin
-            text = f"{idx}. {action_type.upper()} at {grid_coord}: {action[3]}"
-            cv2.putText(img, text,
+            # Add description with improved formatting
+            desc_text = f"{idx}. {action_type.upper()} at {grid_coord}: {action[3]}"
+            desc_size = cv2.getTextSize(desc_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+            
+            # Add white background for description
+            cv2.rectangle(annotated_img,
+                        (10, 50 + 30 * idx - desc_size[1] - 5),
+                        (10 + desc_size[0] + 10, 50 + 30 * idx + 5),
+                        (255, 255, 255),
+                        -1)
+            
+            cv2.putText(annotated_img, desc_text,
                       (10, 50 + 30 * idx), 
                       cv2.FONT_HERSHEY_SIMPLEX,
                       0.7, (0, 0, 255), 2)
         
-        # Save annotated image
-        annotated_path = os.path.join(
-            self.screenshots_dir, 
-            f"annotated_screenshot_{timestamp}.png"
+        # Save the annotated image
+        output_path = os.path.join(
+            self.screenshots_dir,
+            f"analysis_{timestamp}_annotated.png"
         )
-        cv2.imwrite(annotated_path, img)
-        return annotated_path
+        
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+        # Save the image
+        success = cv2.imwrite(output_path, annotated_img)
+        if not success:
+            raise ValueError(f"Failed to save annotated image to {output_path}")
+            
+        # Verify the file was written
+        if not os.path.exists(output_path):
+            raise ValueError(f"Annotated image file was not created at {output_path}")
+            
+        return output_path
 
     def capture_screenshot(self):
         """Capture a screenshot and overlay the dense grid"""
@@ -607,31 +668,96 @@ class JobApplicationAssistant:
             # Now read back the saved image to ensure we're using exactly what we saved
             gridded_img = cv2.imread(gridded_path)
             
-            # Convert to PIL Image for Gemini AI
-            gridded_pil = Image.fromarray(cv2.cvtColor(gridded_img, cv2.COLOR_BGR2RGB))
+            # Create a copy for annotation that includes the grid
+            annotated_img = gridded_img.copy()
+            height, width = annotated_img.shape[:2]
+            
+            # Add a white background section at the top for better text visibility
+            header_height = 150
+            header = np.ones((header_height, width, 3), dtype=np.uint8) * 255
+            annotated_img = np.vstack([header, annotated_img])
+            
+            # Add clear instructions on the white header
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            cv2.putText(annotated_img, "Grid Reference System - Please verify coordinates carefully",
+                      (10, 30), font, 1.0, (0, 0, 255), 2)
+            cv2.putText(annotated_img, "Red lines: Grid boundaries | Blue dots: Intersection points | Green text: Coordinates",
+                      (10, 70), font, 0.7, (0, 0, 0), 2)
+            cv2.putText(annotated_img, f"Screen dimensions: {screen_width_pixels}x{screen_height_pixels} px | Scale factor: {scale_factor}",
+                      (10, 110), font, 0.7, (0, 0, 0), 2)
+            
+            # Save the annotated version
+            annotated_path = os.path.join(
+                self.screenshots_dir,
+                f"annotated_screenshot_{timestamp}.png"
+            )
+            cv2.imwrite(annotated_path, annotated_img)
+            
+            # Convert to PIL Image for Gemini AI - use the annotated version
+            annotated_pil = Image.fromarray(cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB))
             
             prompt = f"""
-            CRITICAL COORDINATE INSTRUCTIONS:
-            You are looking at a screenshot with a green grid overlay. You MUST:
-            1. ONLY use coordinates where you can see actual green dots in the grid
-            2. Look for the closest green dot to each UI element
+            CRITICAL RESPONSE FORMAT REQUIREMENTS:
+            You MUST follow this EXACT format:
+
+            1. Start with "###JSON_START###"
+            2. Then provide a PURE JSON array (no markdown formatting, no ```json tags)
+            3. End with "%%%JSON_END%%%"
+
+            Example of EXACT format required:
+            ###JSON_START###
+            [
+              {{
+                "element_type": "button",
+                "grid_coord": "AA1.44",
+                "description": "Submit button",
+                "recommended_action": "CLICK AA1.44"
+              }}
+            ]
+            %%%JSON_END%%%
+
+            COORDINATE SELECTION STRATEGY:
+            For each UI element, you MUST:
+            1. Identify the four closest grid points (blue dots) that form a quad around the element
+            2. These points should form the smallest possible square/rectangle containing the element
+            3. Calculate the relative position of the element within this quad:
+               - If element is centered between points: use the average of surrounding sub-coordinates
+               - If element is closer to one point: use that point's sub-coordinate
+               - If element spans multiple points: use the most central point for interaction
+
+            QUAD SELECTION RULES:
+            1. ALWAYS select four visible grid points that:
+               - Form a clear boundary around the target element
+               - Are all clearly visible with readable sub-coordinates
+               - Create the smallest possible quad containing the element
+            
+            2. For each quad, analyze:
+               - Which point is closest to the actual interaction target
+               - How the element is positioned relative to the quad corners
+               - Whether the element is centered or aligned to a specific point
+
+            3. Coordinate Selection:
+               - For centered elements: Use sub-coordinates that represent the center of the quad
+               - For aligned elements: Use sub-coordinates closer to the alignment point
+               - For form fields: Ensure the click point is in the input area
+               - For buttons/checkboxes: Ensure the click point is on the control
+
+            COORDINATE INSTRUCTIONS:
+            You MUST:
+            1. ONLY use coordinates where you can see actual blue dots in the grid
+            2. Look for the closest four blue dots that form a quad around each element
             3. Use the exact sub-grid numbers shown in green (00-99)
-            4. Never make up or interpolate coordinates - if you can't see a green dot near the element, use the nearest visible one
-            5. Double-check that your chosen coordinate has both:
-               - A visible green dot
-               - A readable sub-grid number nearby
+            4. Never make up or interpolate coordinates - if you can't see all four quad points, find a different quad
+            5. Double-check that each chosen quad has:
+               - Four visible blue dots
+               - Readable sub-grid numbers for all points
+               - Clear line of sight to the element
 
             Grid System Reference:
-            - Main Grid: A1-J10 (marked with large green labels)
-            - Sub-grid: Each main cell has numbered points (shown in small green numbers)
+            - Main Grid: AA1-ZZ40 (marked with large labels)
+            - Sub-grid: Each main cell has numbered points
             - Format: <main_cell>.<sub_position>
-              Example: If you see main cell "A1" and sub-grid point "45", use "A1.45"
-
-            COORDINATE SELECTION RULES:
-            1. For each element, find the EXACT green dot closest to it
-            2. Look at the nearest sub-grid number (small green numbers)
-            3. Combine the main cell label with that exact sub-grid number
-            4. Do NOT guess or interpolate positions - use only visible dots and numbers
+              Example: If element is centered in quad with point "AA1.45", use that coordinate
 
             Look for these elements:
             1. Interactive Elements:
@@ -650,47 +776,36 @@ class JobApplicationAssistant:
             3. Match with my profile:
             {json.dumps(self.user_profile, indent=2)}
 
-            RESPONSE FORMAT:
-            1. Start with "###GRID_ACTIONS_START###"
-            2. JSON array of actions, each with:
-               - element_type: Type of element
-               - grid_coord: ONLY use coordinates you can see in the grid
-               - description: What this element is
-               - recommended_action: Format as "TYPE <coord> \"<text>\"" or "CLICK <coord>"
-            3. End with "###GRID_ACTIONS_END###"
-
-            Example:
-            ###GRID_ACTIONS_START###
-            [
-              {{
-                "element_type": "Text input",
-                "grid_coord": "A1.44",  // Only if you see the "44" sub-grid number near a green dot in cell A1
-                "description": "Name field",
-                "recommended_action": "TYPE A1.44 \"John Doe\": Enter full name"
-              }}
-            ]
-            ###GRID_ACTIONS_END###
-
             Current application context:
             {json.dumps(self.current_application, indent=2)}
 
             FINAL VERIFICATION:
             Before providing coordinates, verify that:
-            1. Each coordinate corresponds to a visible green dot
-            2. You can see the sub-grid number clearly
-            3. The dot is the closest one to the UI element
-            4. You are not guessing or interpolating positions
+            1. Each element has a clear quad of four points around it
+            2. All quad points have visible sub-grid numbers
+            3. The chosen coordinate represents the best interaction point
+            4. The quad selection follows the minimum size rule
+
+            QUAD ANALYSIS FORMAT:
+            For each element, think through:
+            1. "I see the element [description]"
+            2. "The closest quad points are [TL], [TR], [BL], [BR]"
+            3. "The element is [centered/aligned/positioned] within this quad"
+            4. "Therefore, I will use coordinate [coord] for interaction"
+
+            REMEMBER: Your response MUST start with ###JSON_START### and end with %%%JSON_END%%%
+            The JSON must be a pure array without any markdown formatting or code block tags.
             """
             
-            # Generate content using Gemini AI with the exact saved and reloaded image
+            # Generate content using Gemini AI with the annotated image
             response = client.models.generate_content(
                 model="gemini-2.0-flash",
-                contents=[prompt, gridded_pil]
+                contents=[prompt, annotated_pil]
             )
             
             if response and response.text:
                 self.widget.update_insights(response.text)
-                return response.text, gridded_img  # Return both the response and the exact image used
+                return response.text, annotated_img  # Return both the response and the annotated image
             return None, None
             
         except Exception as e:
@@ -702,90 +817,144 @@ class JobApplicationAssistant:
         """Parse AI response into actionable commands using dense grid coordinates"""
         actions = []
         if not ai_response:
+            print("No AI response to parse")
             return actions
             
         try:
+            # Clean up the response text
+            ai_response = ai_response.strip()
+            print("\nProcessing AI Response:")
+            print("-------------------")
+            print(ai_response)
+            print("-------------------")
+            
             # Extract JSON between delimiters
-            json_match = re.search(r'###GRID_ACTIONS_START###\s*(.*?)\s*###GRID_ACTIONS_END###', 
+            json_match = re.search(r'###JSON_START###\s*(.*?)\s*%%%JSON_END%%%', 
                                  ai_response, re.DOTALL)
             if not json_match:
-                print("No valid JSON found between delimiters")
+                print("No valid JSON found between delimiters ###JSON_START### and %%%JSON_END%%%")
                 return actions
                 
-            json_str = json_match.group(1)
-            action_list = json.loads(json_str)
+            # Get the JSON string and clean it
+            json_str = json_match.group(1).strip()
             
-            # Get screen dimensions and scale factor
-            screen = self.app.primaryScreen()
-            scale_factor = screen.devicePixelRatio()
+            # Remove any potential markdown or code block formatting
+            json_str = re.sub(r'```[^\n]*\n?', '', json_str)
+            json_str = json_str.replace('`', '')
             
-            # Get actual screen dimensions in logical pixels (unscaled)
-            screen_width = screen.geometry().width()
-            screen_height = screen.geometry().height()
+            print("\nExtracted JSON string:")
+            print(json_str)
             
-            # Calculate cell dimensions in logical pixels
-            cell_width = screen_width // 40  # 40x40 grid
-            cell_height = screen_height // 40
-            
-            print(f"Screen dimensions (logical): {screen_width}x{screen_height}")
-            print(f"Cell dimensions (logical): {cell_width}x{cell_height}")
-            
-            for action_data in action_list:
-                coord = action_data['grid_coord']
-                action_type = action_data['recommended_action'].split()[0].lower()
+            # Validate JSON structure before parsing
+            if not json_str.startswith('[') or not json_str.endswith(']'):
+                print("Invalid JSON structure - must be an array")
+                return actions
                 
-                try:
-                    # Parse coordinates for two-letter system with sub-positions
-                    match = re.match(r'([A-Z]{2})(\d+)(?:\.(\d+))?', coord)
-                    if not match:
-                        print(f"Invalid coordinate format: {coord}")
+            try:
+                # Parse the JSON
+                action_list = json.loads(json_str)
+                
+                # Validate action list structure
+                if not isinstance(action_list, list):
+                    print("Invalid action list structure - must be an array")
+                    return actions
+                    
+                # Get screen dimensions and scale factor
+                screen = self.app.primaryScreen()
+                scale_factor = screen.devicePixelRatio()
+                
+                # Get actual screen dimensions in logical pixels (unscaled)
+                screen_width = screen.geometry().width()
+                screen_height = screen.geometry().height()
+                
+                # Calculate cell dimensions in logical pixels
+                cell_width = screen_width // 40  # 40x40 grid
+                cell_height = screen_height // 40
+                
+                print(f"\nScreen dimensions (logical): {screen_width}x{screen_height}")
+                print(f"Cell dimensions (logical): {cell_width}x{cell_height}")
+                
+                for action_data in action_list:
+                    # Validate action data structure
+                    required_fields = ['grid_coord', 'recommended_action', 'description']
+                    if not all(field in action_data for field in required_fields):
+                        print(f"Skipping invalid action data - missing required fields: {action_data}")
                         continue
+                    
+                    coord = action_data['grid_coord']
+                    action_type = action_data['recommended_action'].split()[0].lower()
+                    
+                    try:
+                        # Parse coordinates for two-letter system with sub-positions
+                        match = re.match(r'([A-Z]{2})(\d+)(?:\.(\d+))?', coord)
+                        if not match:
+                            print(f"Invalid coordinate format: {coord}")
+                            continue
+                            
+                        col_letters = match.group(1)  # Two letters (e.g., "BI")
+                        row_num = int(match.group(2))  # Main row number
+                        sub_pos = match.group(3) or "50"  # Sub-position (default to center if not provided)
                         
-                    col_letters = match.group(1)  # Two letters (e.g., "BI")
-                    row_num = int(match.group(2))  # Main row number
-                    sub_pos = match.group(3) or "50"  # Sub-position (default to center if not provided)
-                    
-                    # Calculate column index (AA=0, AB=1, ..., ZZ=675)
-                    first_letter = ord(col_letters[0]) - ord('A')  # First letter (A-Z) = 0-25
-                    second_letter = ord(col_letters[1]) - ord('A')  # Second letter (A-Z) = 0-25
-                    main_col = (first_letter * 26) + second_letter  # Use base-26 for letters
-                    
-                    # Calculate row index (1-based to 0-based)
-                    main_row = row_num - 1
-                    
-                    # Calculate sub-position offsets (0-99 range)
-                    sub_x = int(sub_pos) // 10
-                    sub_y = int(sub_pos) % 10
-                    
-                    # Calculate final coordinates with sub-position offsets
-                    x = int((main_col * cell_width) + (cell_width * sub_x / 10) + (cell_width / 20))
-                    y = int((main_row * cell_height) + (cell_height * sub_y / 10) + (cell_height / 20))
-                    
-                    # Log coordinate calculation
-                    print(f"\nCoordinate calculation for {coord}:")
-                    print(f"Main cell: {col_letters}{row_num} -> col={main_col} (first={first_letter}, second={second_letter}), row={main_row}")
-                    print(f"Sub-position: {sub_pos} -> ({sub_x}, {sub_y})")
-                    print(f"Cell dimensions: {cell_width}x{cell_height}")
-                    print(f"Final logical coordinates: ({x}, {y})")
-                    
-                    # Store the action with exact coordinates
-                    if action_type == 'type':
-                        text_match = re.search(r'"([^"]*)"', action_data['recommended_action'])
-                        if text_match:
-                            text = text_match.group(1)
-                            actions.append(('type', x, y, text, action_data['description'], coord))
-                    elif action_type in ['click', 'select']:
-                        actions.append((action_type, x, y, action_data['description'], coord))
+                        # Calculate column index (corrected calculation)
+                        first_letter = ord(col_letters[0]) - ord('A')
+                        second_letter = ord(col_letters[1]) - ord('A')
+                        col_index = (first_letter * 26) + second_letter
                         
-                except ValueError as ve:
-                    print(f"Error parsing coordinate {coord}: {ve}")
-                    continue
-                except Exception as e:
-                    print(f"Error processing coordinate {coord}: {e}")
-                    continue
-        
-        except json.JSONDecodeError as e:
-            print(f"Error decoding JSON: {e}")
+                        # Ensure column index doesn't exceed grid width
+                        col_index = min(col_index, 39)  # 40x40 grid (0-39)
+                        
+                        # Calculate row index (1-based to 0-based)
+                        main_row = min(row_num - 1, 39)  # Ensure row stays within bounds
+                        
+                        # Calculate sub-position offsets (0-99 range)
+                        sub_x = int(sub_pos) // 10
+                        sub_y = int(sub_pos) % 10
+                        
+                        # Calculate final coordinates with sub-position offsets and bounds checking
+                        x = min(int((col_index * cell_width) + (cell_width * sub_x / 10) + (cell_width / 20)), screen_width - 1)
+                        # Adjust y-coordinate calculation to shift upward
+                        base_y = (main_row * cell_height)
+                        sub_cell_height = cell_height / 10
+                        vertical_offset = cell_height / 2  # Increased from 1/4 to 1/2 cell height to move points higher
+                        y = min(int(base_y + (sub_cell_height * sub_y) - vertical_offset), screen_height - 1)
+                        
+                        # Ensure y coordinate never goes negative
+                        y = max(0, y)
+                        
+                        # Log coordinate calculation
+                        print(f"\nCoordinate calculation for {coord}:")
+                        print(f"Main cell: {col_letters}{row_num} -> col={col_index} (first={first_letter}, second={second_letter}), row={main_row}")
+                        print(f"Sub-position: {sub_pos} -> ({sub_x}, {sub_y})")
+                        print(f"Cell dimensions: {cell_width}x{cell_height}")
+                        print(f"Final logical coordinates: ({x}, {y})")
+                        
+                        # Store the action with exact coordinates and adjusted annotation positions
+                        annotation_y_offset = vertical_offset  # Use same offset for annotations
+                        annotation_y = y - annotation_y_offset  # Move annotation text up with the click point
+                        
+                        if action_type == 'type':
+                            text_match = re.search(r'"([^"]*)"', action_data['recommended_action'])
+                            if text_match:
+                                text = text_match.group(1)
+                                # Include adjusted annotation position
+                                actions.append(('type', x, y, text, action_data['description'], coord, annotation_y))
+                        elif action_type in ['click', 'select']:
+                            # Include adjusted annotation position
+                            actions.append((action_type, x, y, action_data['description'], coord, annotation_y))
+                            
+                    except ValueError as ve:
+                        print(f"Error parsing coordinate {coord}: {ve}")
+                        continue
+                    except Exception as e:
+                        print(f"Error processing coordinate {coord}: {e}")
+                        continue
+                
+            except json.JSONDecodeError as e:
+                print(f"Error decoding JSON: {str(e)}")
+                print("Invalid JSON string:")
+                print(json_str)
+                return actions
+                
         except Exception as e:
             print(f"Error parsing AI response: {e}")
             import traceback
@@ -911,8 +1080,6 @@ class JobApplicationAssistant:
                     time.sleep(0.5)  # Longer wait
                     mouse_controller.position = (x, y)
                     time.sleep(0.3)
-                    mouse_controller.click(mouse.Button.left)
-                    time.sleep(0.3)
             except Exception as recovery_error:
                 print(f"Recovery attempt failed: {recovery_error}")
 
@@ -962,277 +1129,436 @@ class JobApplicationAssistant:
         print("\nAnalyzing application form...")
         self.widget.update_status("Taking screenshot...")
         
-        # Get timestamp for file naming
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Step 1: Initial Analysis
-        # Analyze the form and get both the AI response and the gridded image
-        ai_analysis, gridded_img = self.analyze_application_form(None)
-        
-        if ai_analysis and gridded_img is not None:
-            print("\nInitial AI Analysis:", ai_analysis)
+        try:
+            # Get timestamp for file naming
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             
-            # Parse actions and create initial annotation
-            current_actions = self.parse_ai_response(ai_analysis)
-            if current_actions:
-                # Initialize verification iteration counter
-                verification_iteration = 0
-                max_iterations = 4
-                is_satisfied = False
+            # Create screenshots directory if it doesn't exist
+            os.makedirs(self.screenshots_dir, exist_ok=True)
+            
+            # First create the gridded screenshot
+            screenshot = pyautogui.screenshot()
+            img = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+            
+            # Get screen dimensions and scale factor
+            screen = self.app.primaryScreen()
+            scale_factor = screen.devicePixelRatio()
+            
+            # Calculate dimensions in actual pixels
+            screen_width_pixels = int(screen.geometry().width() * scale_factor)
+            screen_height_pixels = int(screen.geometry().height() * scale_factor)
+            
+            # Create the gridded overlay
+            gridded_img = self._create_grid_overlay(img, screen_width_pixels, screen_height_pixels)
+            
+            # Save the gridded image
+            gridded_path = os.path.join(
+                self.screenshots_dir,
+                f"analysis_{timestamp}_grid.png"
+            )
+            
+            # Save gridded image
+            success = cv2.imwrite(gridded_path, gridded_img)
+            if not success:
+                raise ValueError(f"Failed to save gridded image to {gridded_path}")
+            
+            # Verify the file was written
+            if not os.path.exists(gridded_path):
+                raise ValueError(f"Gridded image file was not created at {gridded_path}")
+            
+            # Convert to PIL Image for Gemini AI
+            annotated_pil = Image.fromarray(cv2.cvtColor(gridded_img, cv2.COLOR_BGR2RGB))
+            
+            # Rest of the analysis process...
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[self._create_analysis_prompt(), annotated_pil]
+            )
+            
+            if response and response.text:
+                print("\nReceived AI response")
+                self.widget.update_insights(response.text)
                 
-                # Keep track of the latest annotated image
-                latest_annotated_path = None
-                
-                # Get screen dimensions and scale factor once
-                screen = self.app.primaryScreen()
-                scale_factor = screen.devicePixelRatio()
-                screen_width = screen.geometry().width()
-                screen_height = screen.geometry().height()
-                
-                # Get image dimensions
-                height, width = gridded_img.shape[:2]
-                
-                # Calculate scaling ratios
-                width_ratio = width / screen_width
-                height_ratio = height / screen_height
-                
-                while verification_iteration < max_iterations and not is_satisfied:
-                    verification_iteration += 1
-                    print(f"\nVerification Iteration {verification_iteration}/{max_iterations}")
-                    
-                    # Create annotated version using the gridded image
-                    current_annotated_img = gridded_img.copy()
-                    
-                    # Add annotations for current actions
-                    for idx, action in enumerate(current_actions, 1):
-                        action_type = action[0]
-                        
-                        # Convert logical coordinates to image coordinates using scaling ratios
-                        x = int(action[1] * width_ratio)
-                        y = int(action[2] * height_ratio)
-                        grid_coord = action[-1]
-                        
-                        # Log coordinate transformation
-                        print(f"\nCoordinate transformation for {grid_coord}:")
-                        print(f"Original coordinates: ({action[1]}, {action[2]})")
-                        print(f"Screen dimensions: {screen_width}x{screen_height}")
-                        print(f"Image dimensions: {width}x{height}")
-                        print(f"Scaling ratios: width={width_ratio}, height={height_ratio}")
-                        print(f"Transformed coordinates: ({x}, {y})")
-                        
-                        # Use different colors based on iteration
-                        if verification_iteration == 1:
-                            circle_color = (0, 0, 255)  # Red for initial
-                        elif verification_iteration == max_iterations:
-                            circle_color = (0, 255, 0)  # Green for final
-                        else:
-                            circle_color = (255, 165, 0)  # Orange for intermediate
-                        
-                        # Draw circle at action point with larger radius and thicker outline
-                        cv2.circle(current_annotated_img, (x, y), 20, circle_color, 3)
-                        
-                        # Add white background for better text visibility
-                        text = f"{idx}. {grid_coord}"
-                        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                        cv2.rectangle(current_annotated_img,
-                                    (x + 25, y - text_size[1] - 5),
-                                    (x + 25 + text_size[0], y + 5),
-                                    (255, 255, 255),
-                                    -1)
-                        cv2.putText(current_annotated_img, text,
-                                  (x + 25, y),
-                                  cv2.FONT_HERSHEY_SIMPLEX,
-                                  0.7, circle_color, 2)
-                        
-                        # Add description with white background
-                        desc_text = f"{idx}. {action_type.upper()} at {grid_coord}: {action[3]}"
-                        desc_size = cv2.getTextSize(desc_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                        cv2.rectangle(current_annotated_img,
-                                    (10, 50 + 30 * idx - desc_size[1] - 5),
-                                    (10 + desc_size[0], 50 + 30 * idx + 5),
-                                    (255, 255, 255),
-                                    -1)
-                        cv2.putText(current_annotated_img, desc_text,
-                                  (10, 50 + 30 * idx),
-                                  cv2.FONT_HERSHEY_SIMPLEX,
-                                  0.7, circle_color, 2)
-                    
-                    # Add iteration status with white background
-                    status_text = f"Verification Iteration {verification_iteration}/{max_iterations}"
-                    status_size = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 3)[0]
-                    cv2.rectangle(current_annotated_img,
-                                (10, 10),
-                                (10 + status_size[0], 40),
-                                (255, 255, 255),
-                                -1)
-                    cv2.putText(current_annotated_img, status_text,
-                              (10, 30),
-                              cv2.FONT_HERSHEY_SIMPLEX,
-                              1.0, (0, 0, 255), 2)
-                    
-                    # Remove previous annotated image if it exists
-                    if latest_annotated_path and os.path.exists(latest_annotated_path):
-                        os.remove(latest_annotated_path)
-                    
-                    # Save current iteration's annotated image
-                    latest_annotated_path = os.path.join(
-                        self.screenshots_dir,
-                        f"analysis_{timestamp}_iter{verification_iteration}.png"
-                    )
-                    cv2.imwrite(latest_annotated_path, current_annotated_img)
-                    print(f"\nIteration {verification_iteration} analysis saved to: {latest_annotated_path}")
-                    
-                    # Convert to PIL for Gemini
-                    annotated_pil = Image.fromarray(cv2.cvtColor(current_annotated_img, cv2.COLOR_BGR2RGB))
-                    
-                    verification_prompt = f"""
-                    COORDINATE VERIFICATION TASK (Iteration {verification_iteration}/{max_iterations}):
-                    
-                    You are looking at an annotated screenshot that shows proposed click/type locations.
-                    Each action point is marked with a colored circle and numbered.
-                    
-                    Current Actions:
-                    {json.dumps([(a[0], a[-1], a[3]) for a in current_actions], indent=2)}
-                    
-                    Please verify with extra attention to accuracy:
-                    1. Are ALL marked positions precisely aligned with their intended targets?
-                    2. Do ANY coordinates need even slight adjustments?
-                    3. Are there ANY misaligned or incorrect positions?
-                    4. Should ANY actions be added or removed?
-                    5. Is this iteration's result COMPLETELY satisfactory?
-                    
-                    RESPONSE FORMAT:
-                    1. Start with "###VERIFICATION_RESULT###"
-                    2. For each action, indicate:
-                       - CORRECT: Position is perfectly accurate
-                       - ADJUST: Needs adjustment (provide new coordinate)
-                       - REMOVE: Action should be removed
-                    3. End with "###SATISFACTION_STATUS###"
-                    4. State if you are SATISFIED or UNSATISFIED with this iteration
-                    5. End with "###VERIFICATION_END###"
-                    
-                    Example:
-                    ###VERIFICATION_RESULT###
-                    1. CORRECT: Click at AA1 for Submit button
-                    2. ADJUST: Type at BB2 should be BB3 for email field
-                    3. REMOVE: Click at CC3 is not a valid target
-                    ###SATISFACTION_STATUS###
-                    UNSATISFIED: Email field coordinate needs adjustment
-                    ###VERIFICATION_END###
-                    """
-                    
-                    # Generate verification using Gemini AI
-                    verification_response = client.models.generate_content(
-                        model="gemini-2.0-flash",
-                        contents=[verification_prompt, annotated_pil]
-                    )
-                    
-                    if verification_response and verification_response.text:
-                        print(f"\nVerification Analysis (Iteration {verification_iteration}):", verification_response.text)
-                        
-                        # Update insights with iteration status
-                        self.widget.update_insights(
-                            f"Verification Iteration {verification_iteration}/{max_iterations}\n\n" +
-                            verification_response.text
-                        )
-                        
-                        # Parse verification results
-                        verification_text = verification_response.text
-                        if "###VERIFICATION_RESULT###" in verification_text and "###VERIFICATION_END###" in verification_text:
-                            # Extract satisfaction status
-                            satisfaction_match = re.search(r'###SATISFACTION_STATUS###\s*(.*?)\s*###VERIFICATION_END###', 
-                                                        verification_text, re.DOTALL)
-                            is_satisfied = satisfaction_match and "SATISFIED" in satisfaction_match.group(1).upper()
-                            
-                            if is_satisfied:
-                                print(f"\nAI is satisfied with the results after {verification_iteration} iterations")
-                                break
-                            
-                            # Parse verification lines
-                            verification_lines = verification_text.split("###VERIFICATION_RESULT###")[1].split("###SATISFACTION_STATUS###")[0].strip().split("\n")
-                            
-                            # Create adjusted actions list
-                            adjusted_actions = []
-                            for idx, action in enumerate(current_actions):
-                                # Find corresponding verification line
-                                for vline in verification_lines:
-                                    if str(idx + 1) in vline:
-                                        if "CORRECT" in vline:
-                                            adjusted_actions.append(action)
-                                        elif "ADJUST" in vline:
-                                            # Try to extract new coordinate
-                                            new_coord_match = re.search(r'should be ([A-Z]{2}\d+)', vline)
-                                            if new_coord_match:
-                                                new_coord = new_coord_match.group(1)
-                                                # Create adjusted action with new coordinate
-                                                adjusted_action = list(action)
-                                                adjusted_action[-1] = new_coord
-                                                adjusted_actions.append(tuple(adjusted_action))
-                                            else:
-                                                adjusted_actions.append(action)
-                                        # Skip if REMOVE
-                                        break
-                            
-                            # Update current actions for next iteration
-                            current_actions = adjusted_actions
-                    else:
-                        print(f"\nVerification failed on iteration {verification_iteration}")
-                        break
-                
-                # Create final annotated image with verified actions
+                # Parse actions and create initial annotation
+                current_actions = self.parse_ai_response(response.text)
                 if current_actions:
-                    final_annotated_img = gridded_img.copy()
+                    # Initialize verification iteration counter
+                    verification_iteration = 0
+                    min_iterations = 2
+                    max_iterations = 4
+                    is_satisfied = False
+                    previous_actions = []
                     
-                    # Add annotations for final verified actions
-                    for idx, action in enumerate(current_actions, 1):
-                        action_type = action[0]
-                        x = int((action[1] / screen.geometry().width()) * width)
-                        y = int((action[2] / screen.geometry().height()) * height)
-                        grid_coord = action[-1]
+                    while (verification_iteration < max_iterations and 
+                           (verification_iteration < min_iterations or not is_satisfied)):
+                        verification_iteration += 1
+                        print(f"\n{'='*50}")
+                        print(f"Verification Iteration {verification_iteration}/{max_iterations}")
+                        print(f"{'='*50}")
                         
-                        # Draw circle at action point (green for final verified)
-                        cv2.circle(final_annotated_img, (x, y), 15, (0, 255, 0), 2)
+                        # Store current actions for comparison
+                        previous_actions.append(current_actions.copy())
                         
-                        # Add label with grid coordinate
-                        cv2.putText(final_annotated_img, f"{idx}. {grid_coord}", 
-                                  (x + 25, y - 10), 
-                                  cv2.FONT_HERSHEY_SIMPLEX, 
-                                  0.7, (0, 255, 0), 2)
-                        
-                        # Add description in the top margin
-                        text = f"{idx}. {action_type.upper()} at {grid_coord}: {action[3]}"
-                        cv2.putText(final_annotated_img, text,
-                                  (10, 50 + 30 * idx), 
-                                  cv2.FONT_HERSHEY_SIMPLEX,
-                                  0.7, (0, 255, 0), 2)
-                    
-                    # Add final verification status
-                    status = "VERIFIED AND SATISFIED" if is_satisfied else "VERIFIED (MAX ITERATIONS)"
-                    cv2.putText(final_annotated_img, f"FINAL ACTIONS - {status}", 
-                              (10, 30), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 
-                              1.0, (0, 255, 0), 2)
-                    
-                    # Save final annotated image
-                    final_annotated_path = os.path.join(
-                        self.screenshots_dir,
-                        f"final_annotated_{timestamp}.png"
-                    )
-                    cv2.imwrite(final_annotated_path, final_annotated_img)
-                    print(f"\nFinal verified screenshot saved to: {final_annotated_path}")
+                        try:
+                            # Generate annotated image with current actions
+                            current_annotated_path = self.annotate_screenshot(
+                                gridded_path,
+                                current_actions,
+                                f"{timestamp}_iter{verification_iteration}"
+                            )
+                            
+                            # Verify the annotated image exists
+                            if not os.path.exists(current_annotated_path):
+                                raise ValueError(f"Annotated image not found at {current_annotated_path}")
+                            
+                            # Read back the annotated image
+                            current_annotated_img = cv2.imread(current_annotated_path)
+                            if current_annotated_img is None:
+                                raise ValueError(f"Could not read annotated image from {current_annotated_path}")
+                            
+                            # Convert to PIL for Gemini
+                            current_annotated_pil = Image.fromarray(cv2.cvtColor(current_annotated_img, cv2.COLOR_BGR2RGB))
+                            
+                            # Create verification prompt
+                            verification_prompt = self._create_verification_prompt(
+                                verification_iteration,
+                                max_iterations,
+                                min_iterations,
+                                current_actions,
+                                previous_actions[-1] if len(previous_actions) > 1 else None
+                            )
+                            
+                            # Generate verification using Gemini AI
+                            verification_response = client.models.generate_content(
+                                model="gemini-2.0-flash",
+                                contents=[verification_prompt, current_annotated_pil]
+                            )
+                            
+                            if verification_response and verification_response.text:
+                                print(f"\nVerification Analysis (Iteration {verification_iteration}):")
+                                print("="*50)
+                                print(verification_response.text)
+                                print("="*50)
+                                
+                                # Update insights with iteration status
+                                self.widget.update_insights(verification_response.text)
+                                
+                                # Process verification response and update actions
+                                current_actions = self._process_verification_response(
+                                    verification_response.text,
+                                    current_actions
+                                )
+                                
+                                # Check if AI is satisfied
+                                is_satisfied = "SATISFIED" in verification_response.text.upper()
+                                if is_satisfied and verification_iteration >= min_iterations:
+                                    print(f"\nAI is satisfied with the results after {verification_iteration} iterations")
+                                    break
+                            else:
+                                raise ValueError("No response from AI for verification")
+                                
+                        except Exception as e:
+                            print(f"Error during iteration {verification_iteration}: {str(e)}")
+                            break
                     
                     # Update UI with final verified actions
-                    self.widget.signals.update_actions_signal.emit(current_actions)
-                    self.widget.signals.show_confirmation_signal.emit(current_actions)
+                    if current_actions:
+                        self.widget.signals.update_actions_signal.emit(current_actions)
+                        self.widget.signals.show_confirmation_signal.emit(current_actions)
+                    else:
+                        self.widget.update_status("No valid actions after verification")
+                        self.widget.signals.update_actions_signal.emit([])
                 else:
-                    self.widget.update_status("No valid actions after verification")
+                    self.widget.update_status("No actionable elements found")
                     self.widget.signals.update_actions_signal.emit([])
             else:
-                self.widget.update_status("No actionable elements found")
+                self.widget.update_status("No response from AI")
                 self.widget.signals.update_actions_signal.emit([])
-        else:
-            self.widget.update_status("Analysis failed")
+                
+        except Exception as e:
+            print(f"Error during form analysis: {str(e)}")
+            self.widget.update_status(f"Analysis failed: {str(e)}")
             self.widget.signals.update_actions_signal.emit([])
+
+    def _create_analysis_prompt(self):
+        """Create the initial analysis prompt"""
+        return f"""
+        CRITICAL RESPONSE FORMAT REQUIREMENTS:
+        You MUST follow this EXACT format:
+
+        1. Start with "###JSON_START###"
+        2. Then provide a PURE JSON array (no markdown formatting, no ```json tags)
+        3. End with "%%%JSON_END%%%"
+
+        Example of EXACT format required:
+        ###JSON_START###
+        [
+          {{
+            "element_type": "button",
+            "grid_coord": "AA1.44",
+            "description": "Submit button",
+            "recommended_action": "CLICK AA1.44"
+          }}
+        ]
+        %%%JSON_END%%%
+
+        PRECISE CENTER CALCULATION REQUIREMENTS:
+        For EVERY element, you MUST:
+        1. Find the exact boundaries of the element:
+           - Identify the top, bottom, left, and right edges
+           - Note any padding or margins that affect the true interaction area
+           - Consider the actual clickable/interactive region
+
+        2. Calculate the TRUE CENTER:
+           - Horizontal center = (left_edge + right_edge) / 2
+           - Vertical center = (top_edge + bottom_edge) / 2
+           - For text fields: Account for text baseline and input area
+           - For buttons: Consider both text and button boundaries
+           - For checkboxes/radio: Target the exact center of the control
+
+        3. Quad Point Selection:
+           a. Find the four grid points that form the smallest possible quad containing the element
+           b. Measure the distances from each quad point to the true center
+           c. Calculate the relative position within the quad:
+              - Horizontal position = (center_x - left_points) / (right_points - left_points)
+              - Vertical position = (center_y - top_points) / (bottom_points - top_points)
+           d. Use these ratios to select or interpolate the most precise sub-coordinate
+
+        COORDINATE PRECISION RULES:
+        1. NEVER just pick the closest point. Instead:
+           - Use the quad points to triangulate the exact center
+           - Calculate precise ratios between the quad points
+           - Select sub-coordinates that match these ratios
+
+        2. For each element type:
+           - Text Fields: Center of the input area, not the label
+           - Buttons: True center of the clickable area
+           - Checkboxes/Radio: Exact center of the control circle/box
+           - Dropdowns: Center of the trigger area
+           - Links: Center of the text, accounting for underlines
+
+        3. Sub-coordinate Selection:
+           - Use the calculated ratios to determine exact sub-coordinates
+           - Example: If center is 40% between points, use corresponding sub-numbers
+           - Round to nearest available sub-coordinate while maintaining center alignment
+
+        QUAD ANALYSIS STEPS:
+        For each element:
+        1. "Element Boundaries:"
+           - Top: [pixel_y]
+           - Bottom: [pixel_y]
+           - Left: [pixel_x]
+           - Right: [pixel_x]
+           - True Center: ([center_x], [center_y])
+
+        2. "Quad Points:"
+           - Top-Left: [coord] at ([x], [y])
+           - Top-Right: [coord] at ([x], [y])
+           - Bottom-Left: [coord] at ([x], [y])
+           - Bottom-Right: [coord] at ([x], [y])
+
+        3. "Center Calculation:"
+           - Horizontal Ratio: [ratio]% between [left_coord] and [right_coord]
+           - Vertical Ratio: [ratio]% between [top_coord] and [bottom_coord]
+           - Selected Sub-coordinates: [sub_x][sub_y] based on ratios
+
+        4. "Final Coordinate:"
+           - Main Cell: [cell] (containing true center)
+           - Sub-position: [sub] (matching calculated ratios)
+           - Full Coordinate: [cell].[sub]
+
+        VERIFICATION REQUIREMENTS:
+        Before finalizing each coordinate:
+        1. Verify the selected point is EXACTLY at the element's true center
+        2. Confirm the sub-coordinates reflect the calculated ratios
+        3. Test if the point falls precisely on the intended interaction area
+        4. Double-check that no edge cases or rounding errors affect accuracy
+
+        Grid System Reference:
+        - Main Grid: AA1-ZZ40 (marked with large labels)
+        - Sub-grid: Each main cell has numbered points (00-99)
+        - Format: <main_cell>.<sub_position>
+        - Example: AA1.45 = Cell AA1, sub-pos (4,5)
+
+        Look for these elements:
+        1. Interactive Elements:
+           - Buttons (Apply, Submit, Next, etc.)
+           - Checkboxes and radio buttons
+           - Text input fields
+           - Dropdown menus
+           - Navigation elements
+
+        2. Form Fields:
+           - Required skills questions
+           - Experience questions
+           - Education verification
+           - Contact information fields
+
+        3. Match with my profile:
+        {json.dumps(self.user_profile, indent=2)}
+
+        Current application context:
+        {json.dumps(self.current_application, indent=2)}
+
+        FINAL VERIFICATION:
+        Before providing coordinates, verify that:
+        1. Each coordinate represents the TRUE CENTER of its element
+        2. The quad calculation and ratios are mathematically correct
+        3. Sub-coordinates accurately reflect the center position
+        4. No element has been approximated or estimated
+
+        REMEMBER: Your response MUST start with ###JSON_START### and end with %%%JSON_END%%%
+        The JSON must be a pure array without any markdown formatting or code block tags.
+        """
+
+    def _create_verification_prompt(self, iteration: int, max_iterations: int, min_iterations: int, current_actions: List[tuple], previous_actions: List[tuple] = None) -> str:
+        """Create the verification prompt for each iteration"""
+        if previous_actions is None:
+            previous_actions = []
+            
+        # Create detailed coordinate-by-coordinate analysis instructions
+        coordinate_list = "\n".join([
+            f"Coordinate {idx + 1}: {action[-2]} - {action[0].upper()} - {action[3]}"
+            for idx, action in enumerate(current_actions)
+        ])
+        
+        return f"""
+        COORDINATE VERIFICATION TASK (Iteration {iteration}/{max_iterations})
+
+        You are looking at an annotated screenshot that shows the current form with:
+        - Red circles and crosshairs: Click/type target positions
+        - White boxes with red text: Coordinate labels and descriptions
+        - Grid overlay: Shows the coordinate system
+
+        Please verify each coordinate ONE BY ONE with extreme precision:
+
+        Coordinates to verify:
+        {coordinate_list}
+
+        For EACH coordinate, analyze:
+        1. VERTICAL ALIGNMENT:
+           - Is the click point EXACTLY aligned with the target element?
+           - Should it be moved up or down? By how much?
+           - Check if text is centered within input fields
+           - For radio buttons/checkboxes, ensure click is on the control
+
+        2. HORIZONTAL ALIGNMENT:
+           - Is the click point EXACTLY on the target element?
+           - Should it be moved left or right? By how much?
+           - Check alignment with text fields and buttons
+           - Verify click points hit interactive elements
+
+        3. ANNOTATION PLACEMENT:
+           - Are labels clearly visible and not overlapping?
+           - Do they point to the correct elements?
+           - Is text readable and properly positioned?
+
+        RESPONSE FORMAT:
+        For each coordinate, provide:
+        ###COORD_START###
+        Coordinate: [coord]
+        Current Position: [description of current position]
+        Vertical Alignment: [CORRECT/TOO HIGH/TOO LOW] by [amount] pixels
+        Horizontal Alignment: [CORRECT/TOO LEFT/TOO RIGHT] by [amount] pixels
+        Annotation: [GOOD/NEEDS ADJUSTMENT]
+        Recommended Action: [KEEP/ADJUST/REMOVE]
+        New Coordinate (if adjustment needed): [new coordinate]
+        ###COORD_END###
+
+        After analyzing all coordinates:
+        ###SUMMARY###
+        Total Coordinates Checked: [number]
+        Coordinates Needing Adjustment: [number]
+        Overall Assessment: [SATISFIED/UNSATISFIED]
+        Explanation: [why satisfied/unsatisfied]
+        ###END###
+
+        CRITICAL REQUIREMENTS:
+        - You MUST check each coordinate individually
+        - You MUST look at the actual positions in the image
+        - You MUST verify both click points and annotations
+        - You MUST provide specific adjustment amounts if needed
+        - You MUST complete at least {min_iterations} iterations
+        - Current iteration: {iteration}
+
+        Remember:
+        - Be extremely precise in your analysis
+        - Don't assume previous coordinates were correct
+        - Check both the click point and its annotation
+        - Consider the actual form element positions
+        """
+
+    def _process_verification_response(self, verification_text: str, current_actions: List[tuple]) -> List[tuple]:
+        """Process the verification response and update actions"""
+        adjusted_actions = []
+        
+        # Extract individual coordinate analyses
+        coord_analyses = re.findall(
+            r'###COORD_START###(.*?)###COORD_END###',
+            verification_text,
+            re.DOTALL
+        )
+        
+        # Process each coordinate analysis
+        for analysis in coord_analyses:
+            try:
+                # Extract coordinate being analyzed
+                coord_match = re.search(r'Coordinate: ([A-Z]{2}\d+(?:\.\d+)?)', analysis)
+                if not coord_match:
+                    continue
+                coord = coord_match.group(1)
+                
+                # Find corresponding action
+                current_action = None
+                for action in current_actions:
+                    if action[-2] == coord:  # Grid coordinate is second to last element
+                        current_action = action
+                        break
+                
+                if not current_action:
+                    continue
+                
+                # Check if adjustment is needed
+                if 'Recommended Action: ADJUST' in analysis:
+                    # Extract new coordinate if provided
+                    new_coord_match = re.search(r'New Coordinate.*?: ([A-Z]{2}\d+(?:\.\d+)?)', analysis)
+                    if new_coord_match:
+                        new_coord = new_coord_match.group(1)
+                        # Create adjusted action with new coordinate
+                        adjusted_action = list(current_action)
+                        adjusted_action[-2] = new_coord  # Update grid coordinate
+                        # Recalculate x,y positions for new coordinate
+                        # (This will be done in next parse_ai_response call)
+                        adjusted_actions.append(tuple(adjusted_action))
+                        print(f"Adjusting {coord} to {new_coord}")
+                    else:
+                        # Keep original if no new coordinate provided
+                        adjusted_actions.append(current_action)
+                        print(f"No new coordinate provided for {coord}, keeping original")
+                elif 'Recommended Action: KEEP' in analysis:
+                    # Keep the action unchanged
+                    adjusted_actions.append(current_action)
+                    print(f"Keeping {coord} unchanged")
+                # Note: REMOVE actions are simply not added to adjusted_actions
+                
+            except Exception as e:
+                print(f"Error processing coordinate analysis: {e}")
+                # Keep original action if there's an error
+                if current_action:
+                    adjusted_actions.append(current_action)
+        
+        # Extract summary
+        summary_match = re.search(
+            r'###SUMMARY###(.*?)###END###',
+            verification_text,
+            re.DOTALL
+        )
+        if summary_match:
+            summary = summary_match.group(1)
+            print("\nVerification Summary:")
+            print(summary)
+        
+        return adjusted_actions
 
     def on_analyze_job(self):
         """Handle job analysis hotkey"""
