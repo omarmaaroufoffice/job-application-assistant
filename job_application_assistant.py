@@ -329,13 +329,13 @@ class FloatingWidget(QMainWindow):
             actions = self.assistant.parse_ai_response(ai_response)
             if actions:
                 self._update_actions(actions)
-                self.update_status("Analysis complete")
+                self._update_status("Analysis complete")
                 self._show_confirmation(actions)
             else:
                 self._update_actions([])
-                self.update_status("No actionable elements found")
+                self._update_status("No actionable elements found")
         except Exception as e:
-            self.update_status(f"Error processing actions: {str(e)}")
+            self._update_status(f"Error processing actions: {str(e)}")
             print(f"Error processing actions: {e}")
 
 class JobApplicationAssistant:
@@ -356,15 +356,20 @@ class JobApplicationAssistant:
         # Load user profile
         self.load_user_profile()
         
-        # Load grid reference
-        self.load_grid_reference()
+        # Initialize screen dimensions with proper scaling for Retina display
+        screen = self.app.primaryScreen()
+        geometry = screen.geometry()
+        scale_factor = screen.devicePixelRatio()
+        self.screen_width = int(geometry.width() * scale_factor)
+        self.screen_height = int(geometry.height() * scale_factor)
+        print(f"Detected screen dimensions: {self.screen_width}x{self.screen_height} (Scale factor: {scale_factor})")
+        
+        # Initialize grid data
+        self.initialize_grid_data()
         
         # Set up PyAutoGUI safety features
         pyautogui.FAILSAFE = True
-        pyautogui.PAUSE = 1.0
-        
-        # Initialize screen dimensions
-        self.screen_width, self.screen_height = pyautogui.size()
+        pyautogui.PAUSE = 0.1  # Reduced from 1.0 to 0.1 for faster movements
         
         # Create screenshots directory
         self.screenshots_dir = "application_screenshots"
@@ -387,6 +392,36 @@ class JobApplicationAssistant:
         
         # Current keys being pressed
         self.current_keys = set()
+
+    def initialize_grid_data(self):
+        """Initialize or reset grid data for the entire screen"""
+        # Calculate cell dimensions for 10x10 grid
+        cell_width = self.screen_width // 10
+        cell_height = self.screen_height // 10
+        
+        # Initialize grid points dictionary
+        points = {}
+        
+        # Generate grid points
+        for i in range(10):
+            for j in range(10):
+                x = j * cell_width + (cell_width // 2)  # Center of cell
+                y = i * cell_height + (cell_height // 2)  # Center of cell
+                coord = f"{chr(65 + j)}{i + 1}"  # A1, B1, etc.
+                points[coord] = {'x': x, 'y': y}
+        
+        # Create grid data structure
+        self.grid_data = {
+            'screen_width': self.screen_width,
+            'screen_height': self.screen_height,
+            'cell_width': cell_width,
+            'cell_height': cell_height,
+            'points': points
+        }
+        
+        # Save grid reference
+        with open('grid_reference.json', 'w') as f:
+            json.dump(self.grid_data, f, indent=2)
 
     def start_keyboard_listener(self):
         """Start keyboard listener in a separate thread"""
@@ -428,263 +463,537 @@ class JobApplicationAssistant:
         else:
             raise ValueError("Please ensure user_profile.json exists with your resume information")
 
-    def load_grid_reference(self):
-        """Load grid reference data"""
-        try:
-            with open('grid_reference.json', 'r') as f:
-                self.grid_data = json.load(f)
-            print("Grid reference loaded successfully")
-        except FileNotFoundError:
-            print("Grid reference not found. Please run screen_mapper.py first")
-            self.grid_data = None
-
     def get_nearest_grid_point(self, x: int, y: int) -> str:
-        """Find the nearest grid point to given coordinates"""
+        """Find the nearest grid point in the dense grid system"""
         if not self.grid_data:
             return None
             
         min_dist = float('inf')
         nearest_point = None
         
-        for coord_label, point in self.grid_data['points'].items():
-            dist = ((x - point['x'])**2 + (y - point['y'])**2)**0.5
-            if dist < min_dist:
-                min_dist = dist
-                nearest_point = coord_label
+        # First find the nearest main cell
+        main_cell_width = self.grid_data['cell_width']
+        main_cell_height = self.grid_data['cell_height']
         
-        return nearest_point
+        main_col = min(max(0, x // main_cell_width), 9)
+        main_row = min(max(0, y // main_cell_height), 9)
+        main_coord = f"{chr(65 + main_col)}{main_row + 1}"
+        
+        # Then find the nearest sub-cell
+        sub_cell_width = main_cell_width // 10
+        sub_cell_height = main_cell_height // 10
+        
+        sub_x = (x % main_cell_width) // sub_cell_width
+        sub_y = (y % main_cell_height) // sub_cell_height
+        
+        return f"{main_coord}.{sub_x}{sub_y}"
 
     def annotate_screenshot(self, image_path: str, actions: List[tuple], timestamp: str) -> str:
-        """Annotate screenshot with planned actions and grid coordinates"""
+        """Annotate screenshot with planned actions"""
         img = cv2.imread(image_path)
+        height, width = img.shape[:2]
         
-        # Colors (BGR format)
-        colors = {
-            'click': (0, 255, 0),    # Green
-            'type': (255, 0, 0),     # Blue
-            'select': (0, 0, 255)    # Red
-        }
-        
-        annotated = img.copy()
+        # Get scale factor for display
+        scale_factor = self.app.primaryScreen().devicePixelRatio()
         
         # Add title and timestamp
-        cv2.putText(annotated, "Detected Actions (with Grid Coordinates):", 
-                  (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
-                  1.0, (0, 0, 0), 2)
-        
-        # Draw grid lines (light gray)
-        for i in range(11):  # 10x10 grid
-            x = int(i * self.grid_data['cell_width'])
-            y = int(i * self.grid_data['cell_height'])
-            
-            # Vertical lines
-            cv2.line(annotated, (x, 0), (x, self.screen_height), (200, 200, 200), 1)
-            # Horizontal lines
-            cv2.line(annotated, (0, y), (self.screen_width, y), (200, 200, 200), 1)
+        cv2.putText(img, "Detected Actions:", 
+                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
+                   1.0, (0, 0, 255), 2)
         
         # Add each action to the image
         for idx, action in enumerate(actions, 1):
             action_type = action[0]
-            x, y = action[1], action[2]
-            color = colors[action_type]
-            grid_coord = action[-1]  # Last element is grid coordinate
+            
+            # Convert logical coordinates to screen coordinates for display
+            x = int(action[1] * scale_factor)
+            y = int(action[2] * scale_factor)
+            grid_coord = action[-1]
             
             # Draw circle at action point
-            cv2.circle(annotated, (x, y), 15, color, 2)
+            cv2.circle(img, (x, y), 15, (0, 0, 255), 2)
             
-            # Draw arrow
-            cv2.arrowedLine(annotated, 
-                         (x + 50, y + 50), 
-                         (x, y), 
-                         color, 
-                         2, 
-                         tipLength=0.3)
-            
-            # Add label with grid coordinate
-            cv2.putText(annotated, f"{idx}. {grid_coord}", 
-                      (x-5, y+25), 
+            # Add label with grid coordinate (offset to not overlap with circle)
+            cv2.putText(img, f"{idx}. {grid_coord}", 
+                      (x + 25, y - 10), 
                       cv2.FONT_HERSHEY_SIMPLEX, 
-                      0.7, color, 2)
+                      0.7, (0, 0, 255), 2)
             
-            # Add description box
-            if action_type == 'type':
-                text = f"{idx}. {action_type.upper()} at {grid_coord}: {action[3]}"
-            else:
-                text = f"{idx}. {action_type.upper()} at {grid_coord}: {action[-2]}"  # -2 is description
-                
-            (text_width, text_height), _ = cv2.getTextSize(text, 
-                                                         cv2.FONT_HERSHEY_SIMPLEX,
-                                                         0.7, 2)
-            
-            # Draw text background
-            cv2.rectangle(annotated,
-                        (10, 50 + 30 * idx),
-                        (10 + text_width, 50 + 30 * idx + text_height + 10),
-                        color,
-                        -1)
-            
-            # Draw text
-            cv2.putText(annotated, text,
-                      (10, 50 + 30 * idx + text_height), 
+            # Add description in the top margin
+            text = f"{idx}. {action_type.upper()} at {grid_coord}: {action[3]}"
+            cv2.putText(img, text,
+                      (10, 50 + 30 * idx), 
                       cv2.FONT_HERSHEY_SIMPLEX,
-                      0.7, (255, 255, 255), 2)
-        
-        # Add timestamp
-        cv2.putText(annotated, f"Analyzed: {timestamp}", 
-                  (10, annotated.shape[0] - 20), 
-                  cv2.FONT_HERSHEY_SIMPLEX, 
-                  0.6, (0, 0, 0), 1)
+                      0.7, (0, 0, 255), 2)
         
         # Save annotated image
         annotated_path = os.path.join(
             self.screenshots_dir, 
             f"annotated_screenshot_{timestamp}.png"
         )
-        cv2.imwrite(annotated_path, annotated)
-        
+        cv2.imwrite(annotated_path, img)
         return annotated_path
 
     def capture_screenshot(self):
-        """Capture a screenshot and save it temporarily"""
+        """Capture a screenshot and overlay the dense grid"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         screenshot = pyautogui.screenshot()
         
         # Save original screenshot
-        original_path = os.path.join(
+        screenshot_path = os.path.join(
             self.screenshots_dir, 
-            f"original_screenshot_{timestamp}.png"
+            f"screenshot_{timestamp}.png"
         )
-        screenshot.save(original_path)
+        screenshot.save(screenshot_path)
         
-        return original_path, timestamp
+        # Convert screenshot to numpy array for OpenCV processing
+        img = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+        height, width = img.shape[:2]
+        
+        # Get screen dimensions and scale factor
+        screen = self.app.primaryScreen()
+        scale_factor = screen.devicePixelRatio()
+        
+        # Calculate dimensions in actual pixels
+        screen_width_pixels = int(screen.geometry().width() * scale_factor)
+        screen_height_pixels = int(screen.geometry().height() * scale_factor)
+        
+        # Calculate cell dimensions
+        main_cell_width = width // 10
+        main_cell_height = height // 10
+        sub_cell_width = main_cell_width // 10
+        sub_cell_height = main_cell_height // 10
+        
+        # Create overlay
+        overlay = img.copy()
+        
+        # Define colors (BGR format)
+        GRID_COLOR = (0, 255, 0)  # Green for all grid elements
+        
+        # Draw main grid
+        for i in range(11):  # Vertical lines
+            x = i * main_cell_width
+            cv2.line(overlay, (x, 0), (x, height), GRID_COLOR, 1)
+            
+        for i in range(11):  # Horizontal lines
+            y = i * main_cell_height
+            cv2.line(overlay, (0, y), (width, y), GRID_COLOR, 1)
+        
+        # Draw sub-grid and labels
+        for main_row in range(10):
+            for main_col in range(10):
+                # Main cell coordinate
+                main_coord = f"{chr(65 + main_col)}{main_row + 1}"
+                
+                # Calculate main cell boundaries
+                main_x_start = main_col * main_cell_width
+                main_y_start = main_row * main_cell_height
+                
+                # Add main coordinate label
+                label_x = main_x_start + 2  # Reduced from 5
+                label_y = main_y_start + 12  # Reduced from 25
+                # Draw white outline for better visibility
+                cv2.putText(overlay, main_coord,
+                          (label_x, label_y),
+                          cv2.FONT_HERSHEY_SIMPLEX,
+                          0.3, (255, 255, 255), 2)  # Reduced from 0.8
+                # Draw green text
+                cv2.putText(overlay, main_coord,
+                          (label_x, label_y),
+                          cv2.FONT_HERSHEY_SIMPLEX,
+                          0.3, GRID_COLOR, 1)  # Reduced from 0.8
+                
+                # Draw sub-grid
+                for sub_row in range(10):
+                    for sub_col in range(10):
+                        # Calculate sub-cell center position
+                        center_x = main_x_start + (sub_col * sub_cell_width) + (sub_cell_width // 2)
+                        center_y = main_y_start + (sub_row * sub_cell_height) + (sub_cell_height // 2)
+                        
+                        # Draw center point
+                        cv2.circle(overlay, (center_x, center_y), 1, GRID_COLOR, -1)
+                        
+                        # Add sub-coordinate label (every 2nd point)
+                        if sub_col % 2 == 0 and sub_row % 2 == 0:
+                            sub_label = f"{sub_col}{sub_row}"
+                            # Draw white outline
+                            cv2.putText(overlay, sub_label,
+                                      (center_x - 4, center_y - 4),  # Reduced from -8
+                                      cv2.FONT_HERSHEY_SIMPLEX,
+                                      0.2, (255, 255, 255), 1)  # Reduced from 0.3
+                            # Draw green text
+                            cv2.putText(overlay, sub_label,
+                                      (center_x - 4, center_y - 4),  # Reduced from -8
+                                      cv2.FONT_HERSHEY_SIMPLEX,
+                                      0.2, GRID_COLOR, 1)  # Reduced from 0.3
+        
+        # Blend overlay with original image
+        alpha = 0.7
+        cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
+        
+        # Add legend
+        legend_height = 80
+        legend = np.zeros((legend_height, width, 3), dtype=np.uint8)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        
+        # Add legend text
+        def add_legend_text(text, pos_x, pos_y):
+            cv2.putText(legend, text, (pos_x, pos_y), font, 0.7, (255, 255, 255), 3)  # White outline
+            cv2.putText(legend, text, (pos_x, pos_y), font, 0.7, GRID_COLOR, 1)  # Green text
+        
+        add_legend_text(f"Grid Reference (100x100) - Screen: {screen_width_pixels}x{screen_height_pixels} px", 10, 30)
+        add_legend_text("Main Grid: A1-J10", 10, 60)
+        add_legend_text("Sub-grid: 00-99 per cell", 400, 60)
+        add_legend_text("Format: A1.45 = Cell A1, sub-pos (4,5)", 800, 60)
+        
+        # Combine image with legend
+        img_with_legend = np.vstack([img, legend])
+        
+        # Save the gridded screenshot
+        gridded_path = os.path.join(
+            self.screenshots_dir,
+            f"gridded_screenshot_{timestamp}.png"
+        )
+        cv2.imwrite(gridded_path, img_with_legend)
+        
+        return gridded_path, timestamp
+
+    def capture_zoomed_screenshot(self, x, y, width, height, timestamp):
+        """Capture a zoomed screenshot of an area of interest"""
+        # Calculate zoom area (make it 3x3 cells around the point of interest)
+        zoom_width = width * 3
+        zoom_height = height * 3
+        
+        # Calculate top-left corner of zoom area
+        zoom_x = max(0, x - zoom_width)
+        zoom_y = max(0, y - zoom_height)
+        
+        # Take screenshot
+        screenshot = pyautogui.screenshot(region=(zoom_x, zoom_y, zoom_width * 2, zoom_height * 2))
+        
+        # Convert to numpy array for OpenCV
+        img = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+        
+        # Create zoomed grid overlay
+        height, width = img.shape[:2]
+        
+        # Calculate cell dimensions for zoomed grid (10x10 in the zoomed area)
+        cell_width = width // 10
+        cell_height = height // 10
+        
+        # Create overlay
+        overlay = img.copy()
+        
+        # Define colors (BGR format)
+        GRID_COLOR = (0, 165, 255)  # Bright orange
+        
+        # Draw detailed grid
+        for i in range(11):
+            x = i * cell_width
+            y = i * cell_height
+            cv2.line(overlay, (x, 0), (x, height), GRID_COLOR, 1)
+            cv2.line(overlay, (0, y), (width, y), GRID_COLOR, 1)
+            
+        # Add cell labels and center dots
+        for row in range(10):
+            for col in range(10):
+                # Calculate cell center
+                center_x = col * cell_width + cell_width // 2
+                center_y = row * cell_height + cell_height // 2
+                
+                # Draw center dot
+                cv2.circle(overlay, (center_x, center_y), 4, GRID_COLOR, -1)
+                
+                # Add coordinate label
+                label = f"{col},{row}"
+                cv2.putText(overlay, label,
+                          (center_x - 20, center_y - 10),
+                          cv2.FONT_HERSHEY_SIMPLEX,
+                          0.5,
+                          (255, 255, 255),
+                          4)
+                cv2.putText(overlay, label,
+                          (center_x - 20, center_y - 10),
+                          cv2.FONT_HERSHEY_SIMPLEX,
+                          0.5,
+                          GRID_COLOR,
+                          1)
+        
+        # Blend overlay with original image
+        alpha = 0.4
+        cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, overlay)
+        
+        # Save zoomed screenshot
+        zoomed_path = os.path.join(
+            self.screenshots_dir,
+            f"zoomed_screenshot_{timestamp}_{x}_{y}.png"
+        )
+        cv2.imwrite(zoomed_path, overlay)
+        
+        return zoomed_path
 
     def analyze_application_form(self, image_path):
-        """Analyze the job application form using Gemini AI with grid reference"""
+        """Analyze the job application form using Gemini AI with dense grid reference"""
         try:
-            self.widget.update_status("Analyzing form...")
-            # Open images
-            image = Image.open(image_path)
-            grid_img = Image.open('grid_reference.png')
+            self.widget.update_status("Analyzing form with dense grid...")
             
-            prompt = f"""
-            Analyze this job application form screenshot using the grid reference system.
-            The screen is divided into a 10x10 grid (A1-J10), where:
-            - A1 is top-left corner
-            - J10 is bottom-right corner
-            - Each intersection has a red dot and coordinate label
+            # First create the gridded screenshot
+            screenshot = pyautogui.screenshot()
+            img = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
             
-            Look for these elements and map them to the nearest grid coordinates:
-
-            1. Interactive Elements:
-               - Blue "Apply now" buttons
-               - "Yes/No/Skip" buttons
-               - Checkboxes and radio buttons
-               - Text input fields
-               - Dropdown menus
-               - Navigation elements
-
-            2. Form Fields:
-               - Required skills questions
-               - Experience questions
-               - Education verification
-               - Contact information fields
-
-            3. Match with my profile:
-            {json.dumps(self.user_profile, indent=2)}
-
-            For each element found, provide:
-            - Element type
-            - Nearest grid coordinate (e.g., A1, B5, J10)
-            - Description
-            - Recommended action based on my profile
+            # Get screen dimensions and scale factor
+            screen = self.app.primaryScreen()
+            scale_factor = screen.devicePixelRatio()
             
-            Format response EXACTLY as:
-            - CLICK <grid_coord>: <element_type> - <description>
-            - TYPE <grid_coord> "<text>": <field_type> - <content from profile>
-            - SELECT <grid_coord>: <option> - <reason>
-
-            Current application context:
-            {json.dumps(self.current_application, indent=2)}
+            # Calculate dimensions in actual pixels
+            screen_width_pixels = int(screen.geometry().width() * scale_factor)
+            screen_height_pixels = int(screen.geometry().height() * scale_factor)
+            
+            # Create the gridded overlay and merge it with the screenshot
+            gridded_img = self._create_grid_overlay(img, screen_width_pixels, screen_height_pixels)
+            
+            # Save the gridded image first (for debugging)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            gridded_path = os.path.join(
+                self.screenshots_dir,
+                f"gridded_screenshot_{timestamp}.png"
+            )
+            cv2.imwrite(gridded_path, gridded_img)
+            
+            # Convert to PIL Image for Gemini AI
+            gridded_pil = Image.fromarray(cv2.cvtColor(gridded_img, cv2.COLOR_BGR2RGB))
+            
+            # First prompt to identify areas of interest
+            initial_prompt = """
+            Look at this screenshot and identify areas that contain interactive elements or form fields.
+            For each area of interest, provide the grid coordinates (e.g., AA1, BB2) where the element is located.
+            Only list areas where you can clearly see form elements, buttons, or input fields.
+            
+            Format your response as:
+            ###AREAS_START###
+            [
+                {
+                    "area": "Brief description",
+                    "coord": "Grid coordinate (e.g., AA1)",
+                    "type": "button/input/dropdown"
+                }
+            ]
+            ###AREAS_END###
             """
             
-            # Generate content using the correct model and format
-            response = client.models.generate_content(
+            # Get initial analysis
+            initial_response = client.models.generate_content(
                 model="gemini-2.0-flash",
-                contents=[prompt, image, grid_img]
+                contents=[initial_prompt, gridded_pil]
             )
             
-            if response and response.text:
-                self.widget.update_insights(response.text)
-                return response.text
-            return None
+            # Parse areas of interest
+            areas = []
+            if initial_response and initial_response.text:
+                areas_match = re.search(r'###AREAS_START###\s*(.*?)\s*###AREAS_END###', 
+                                      initial_response.text, re.DOTALL)
+                if areas_match:
+                    areas = json.loads(areas_match.group(1))
+            
+            # Take zoomed screenshots of each area
+            zoomed_screenshots = []
+            cell_width = screen_width_pixels // 40
+            cell_height = screen_height_pixels // 40
+            
+            for area in areas:
+                coord = area['coord']
+                # Parse coordinate
+                match = re.match(r'([A-Z]{2})(\d+)', coord)
+                if match:
+                    col_letters = match.group(1)
+                    row_num = int(match.group(2))
+                    
+                    # Calculate column index
+                    first_letter = ord(col_letters[0]) - ord('A')
+                    second_letter = ord(col_letters[1]) - ord('A')
+                    col_index = (first_letter * 26) + second_letter
+                    
+                    # Calculate pixel coordinates
+                    x = col_index * cell_width
+                    y = (row_num - 1) * cell_height
+                    
+                    # Capture zoomed screenshot
+                    zoomed_path = self.capture_zoomed_screenshot(x, y, cell_width, cell_height, timestamp)
+                    zoomed_screenshots.append({
+                        'path': zoomed_path,
+                        'area': area
+                    })
+            
+            # Now analyze each zoomed screenshot for precise coordinates
+            detailed_prompt = f"""
+            CRITICAL COORDINATE INSTRUCTIONS:
+            You are looking at a zoomed screenshot with a detailed grid overlay.
+            The grid is 10x10 within the zoomed area.
+            Use the exact coordinate numbers shown on the grid (e.g., "5,7").
+            
+            Look for these elements:
+            {json.dumps(areas, indent=2)}
+            
+            RESPONSE FORMAT:
+            ###GRID_ACTIONS_START###
+            [
+              {{
+                "element_type": "Type of element",
+                "grid_coord": "Original coordinate + sub-coordinate (e.g., AA1.57)",
+                "description": "What this element is",
+                "recommended_action": "TYPE/CLICK action"
+              }}
+            ]
+            ###GRID_ACTIONS_END###
+            """
+            
+            # Analyze each zoomed screenshot
+            all_responses = []
+            for screenshot in zoomed_screenshots:
+                zoomed_img = Image.open(screenshot['path'])
+                response = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=[detailed_prompt, zoomed_img]
+                )
+                if response and response.text:
+                    all_responses.append(response.text)
+            
+            # Combine all responses
+            combined_response = "\n".join(all_responses)
+            self.widget.update_insights(combined_response)
+            return combined_response, gridded_img
             
         except Exception as e:
             self.widget.update_status(f"Error: {str(e)}")
             print(f"Error analyzing form: {e}")
-            return None
+            return None, None
 
     def parse_ai_response(self, ai_response):
-        """Parse AI response into actionable commands using grid coordinates"""
+        """Parse AI response into actionable commands using dense grid coordinates"""
         actions = []
-        if ai_response:
-            lines = ai_response.split('\n')
-            for line in lines:
-                line = line.strip()
-                if line.startswith('- CLICK'):
-                    # Extract grid coordinate (e.g., A1, B5, H4) - handle both <H4> and H4: formats
-                    coord_match = re.search(r'[<\s]([A-J][1-9][0]?)[>:]', line)
-                    if coord_match:
-                        coord = coord_match.group(1)
-                        if coord in self.grid_data['points']:
-                            point = self.grid_data['points'][coord]
-                            description = re.search(r'(?::|>)\s*(.*?)(?:\s*$|-\s*|$)', line)
-                            desc = description.group(1) if description else ""
-                            actions.append(('click', point['x'], point['y'], desc, coord))
+        if not ai_response:
+            return actions
+            
+        try:
+            # Extract JSON between delimiters
+            json_match = re.search(r'###GRID_ACTIONS_START###\s*(.*?)\s*###GRID_ACTIONS_END###', 
+                                 ai_response, re.DOTALL)
+            if not json_match:
+                print("No valid JSON found between delimiters")
+                return actions
                 
-                elif line.startswith('- TYPE'):
-                    coord_match = re.search(r'[<\s]([A-J][1-9][0]?)[>:]', line)
-                    text_match = re.search(r'"([^"]*)"', line)
-                    if coord_match and text_match and coord_match.group(1) in self.grid_data['points']:
-                        coord = coord_match.group(1)
-                        point = self.grid_data['points'][coord]
-                        text = text_match.group(1)
-                        description = re.search(r'(?::|>)\s*(.*?)(?:\s*$|-\s*|$)', line)
-                        desc = description.group(1) if description else ""
-                        actions.append(('type', point['x'], point['y'], text, desc, coord))
+            json_str = json_match.group(1)
+            action_list = json.loads(json_str)
+            
+            # Get screen dimensions and scale factor
+            screen = self.app.primaryScreen()
+            scale_factor = screen.devicePixelRatio()
+            
+            # Get actual screen dimensions in logical pixels (unscaled)
+            screen_width = screen.geometry().width()
+            screen_height = screen.geometry().height()
+            
+            # Calculate cell dimensions in logical pixels
+            cell_width = screen_width // 40  # 40x40 grid
+            cell_height = screen_height // 40
+            
+            print(f"Screen dimensions (logical): {screen_width}x{screen_height}")
+            print(f"Cell dimensions (logical): {cell_width}x{cell_height}")
+            
+            for action_data in action_list:
+                coord = action_data['grid_coord']
+                action_type = action_data['recommended_action'].split()[0].lower()
                 
-                elif line.startswith('- SELECT'):
-                    coord_match = re.search(r'[<\s]([A-J][1-9][0]?)[>:]', line)
-                    if coord_match and coord_match.group(1) in self.grid_data['points']:
-                        coord = coord_match.group(1)
-                        point = self.grid_data['points'][coord]
-                        description = re.search(r'(?::|>)\s*(.*?)(?:\s*$|-\s*|$)', line)
-                        desc = description.group(1) if description else ""
-                        actions.append(('select', point['x'], point['y'], desc, coord))
+                try:
+                    # Parse coordinates for two-letter system with sub-positions
+                    match = re.match(r'([A-Z]{2})(\d+)(?:\.(\d+))?', coord)
+                    if not match:
+                        print(f"Invalid coordinate format: {coord}")
+                        continue
+                        
+                    col_letters = match.group(1)  # Two letters (e.g., "BI")
+                    row_num = int(match.group(2))  # Main row number
+                    sub_pos = match.group(3) or "50"  # Sub-position (default to center if not provided)
+                    
+                    # Calculate column index (AA=0, AB=1, ..., ZZ=675)
+                    first_letter = ord(col_letters[0]) - ord('A')  # First letter (A-Z) = 0-25
+                    second_letter = ord(col_letters[1]) - ord('A')  # Second letter (A-Z) = 0-25
+                    main_col = (first_letter * 26) + second_letter  # Use base-26 for letters
+                    
+                    # Calculate row index (1-based to 0-based)
+                    main_row = row_num - 1
+                    
+                    # Calculate sub-position offsets (0-99 range)
+                    sub_x = int(sub_pos) // 10
+                    sub_y = int(sub_pos) % 10
+                    
+                    # Calculate final coordinates with sub-position offsets
+                    x = int((main_col * cell_width) + (cell_width * sub_x / 10) + (cell_width / 20))
+                    y = int((main_row * cell_height) + (cell_height * sub_y / 10) + (cell_height / 20))
+                    
+                    # Log coordinate calculation
+                    print(f"\nCoordinate calculation for {coord}:")
+                    print(f"Main cell: {col_letters}{row_num} -> col={main_col} (first={first_letter}, second={second_letter}), row={main_row}")
+                    print(f"Sub-position: {sub_pos} -> ({sub_x}, {sub_y})")
+                    print(f"Cell dimensions: {cell_width}x{cell_height}")
+                    print(f"Final logical coordinates: ({x}, {y})")
+                    
+                    # Store the action with exact coordinates
+                    if action_type == 'type':
+                        text_match = re.search(r'"([^"]*)"', action_data['recommended_action'])
+                        if text_match:
+                            text = text_match.group(1)
+                            actions.append(('type', x, y, text, action_data['description'], coord))
+                    elif action_type in ['click', 'select']:
+                        actions.append((action_type, x, y, action_data['description'], coord))
+                        
+                except ValueError as ve:
+                    print(f"Error parsing coordinate {coord}: {ve}")
+                    continue
+                except Exception as e:
+                    print(f"Error processing coordinate {coord}: {e}")
+                    continue
+        
+        except json.JSONDecodeError as e:
+            print(f"Error decoding JSON: {e}")
+        except Exception as e:
+            print(f"Error parsing AI response: {e}")
+            import traceback
+            traceback.print_exc()
         
         return actions
 
     def execute_single_action(self, action):
-        """Execute a single action"""
+        """Execute a single action with precise coordinates"""
         try:
             x, y = action[1], action[2]
+            coord = action[-1]
+            
+            # Log the action with precise coordinates
+            print(f"Executing {action[0]} at {coord} ({x}, {y})")
+            
+            # Coordinates are already in logical coordinates (scaled for PyAutoGUI)
             if action[0] in ['click', 'select']:
-                pyautogui.moveTo(x, y, duration=0.5, tween=pyautogui.easeInOutQuad)
+                # Move to position with high precision
+                pyautogui.moveTo(x, y, duration=0.1, tween=pyautogui.easeOutQuad)
                 pyautogui.click()
             elif action[0] == 'type':
-                pyautogui.moveTo(x, y, duration=0.5)
+                # Move and type with high precision
+                pyautogui.moveTo(x, y, duration=0.1)
                 pyautogui.click()
-                pyautogui.typewrite(action[3], interval=0.1)
+                pyautogui.typewrite(action[3], interval=0.05)
             
-            # Store successful action in current application state
-            self.current_application['grid_positions'][action[-1]] = {
+            # Store successful action with detailed coordinates
+            self.current_application['grid_positions'][coord] = {
                 'type': action[0],
-                'description': action[3] if action[0] == 'type' else action[-2]
+                'description': action[3] if action[0] == 'type' else action[-2],
+                'coordinates': {'x': x, 'y': y}
             }
             
-            time.sleep(1)
+            time.sleep(0.2)  # Reduced wait time
             
         except Exception as e:
-            print(f"Error executing action at {action[-1]}: {e}")
+            print(f"Error executing action at {coord}: {e}")
             self.widget.update_status(f"Error executing action: {e}")
 
     def analyze_job_description(self, job_text: str) -> Dict[str, Any]:
@@ -732,18 +1041,73 @@ class JobApplicationAssistant:
             
         print("\nAnalyzing application form...")
         self.widget.update_status("Taking screenshot...")
-        screenshot_path, timestamp = self.capture_screenshot()
-        ai_analysis = self.analyze_application_form(screenshot_path)
         
-        if ai_analysis:
+        # Get timestamp for file naming
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Analyze the form and get both the AI response and the gridded image
+        ai_analysis, gridded_img = self.analyze_application_form(None)  # No need for image path now
+        
+        if ai_analysis and gridded_img is not None:
             print("\nAI Analysis:", ai_analysis)
+            
+            # Save the gridded screenshot that was actually used for analysis
+            gridded_path = os.path.join(
+                self.screenshots_dir,
+                f"gridded_screenshot_{timestamp}.png"
+            )
+            cv2.imwrite(gridded_path, gridded_img)
+            
             # Process actions in main thread via signal
             self.widget.signals.process_actions_signal.emit(ai_analysis)
             
-            # Annotate screenshot with actions (this is done in the background thread)
+            # Parse actions and create annotation
             actions = self.parse_ai_response(ai_analysis)
             if actions:
-                annotated_path = self.annotate_screenshot(screenshot_path, actions, timestamp)
+                # Create annotated version using the same gridded image
+                annotated_img = gridded_img.copy()
+                height, width = annotated_img.shape[:2]
+                
+                # Get screen dimensions and scale factor
+                screen = self.app.primaryScreen()
+                scale_factor = screen.devicePixelRatio()
+                
+                # Calculate cell dimensions in actual pixels
+                screen_width = int(screen.geometry().width() * scale_factor)
+                screen_height = int(screen.geometry().height() * scale_factor)
+                cell_width = screen_width // 40
+                cell_height = screen_height // 40
+                
+                # Add annotations for each action
+                for idx, action in enumerate(actions, 1):
+                    action_type = action[0]
+                    # Convert logical coordinates to screen coordinates
+                    x = int((action[1] / screen.geometry().width()) * width)
+                    y = int((action[2] / screen.geometry().height()) * height)
+                    grid_coord = action[-1]
+                    
+                    # Draw circle at action point
+                    cv2.circle(annotated_img, (x, y), 15, (0, 0, 255), 2)
+                    
+                    # Add label with grid coordinate (offset to not overlap with circle)
+                    cv2.putText(annotated_img, f"{idx}. {grid_coord}", 
+                              (x + 25, y - 10), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 
+                              0.7, (0, 0, 255), 2)
+                    
+                    # Add description in the top margin
+                    text = f"{idx}. {action_type.upper()} at {grid_coord}: {action[3]}"
+                    cv2.putText(annotated_img, text,
+                              (10, 50 + 30 * idx), 
+                              cv2.FONT_HERSHEY_SIMPLEX,
+                              0.7, (0, 0, 255), 2)
+                
+                # Save annotated image
+                annotated_path = os.path.join(
+                    self.screenshots_dir,
+                    f"annotated_screenshot_{timestamp}.png"
+                )
+                cv2.imwrite(annotated_path, annotated_img)
                 print(f"\nAnnotated screenshot saved to: {annotated_path}")
         else:
             self.widget.update_status("No actionable elements found")
@@ -779,6 +1143,264 @@ class JobApplicationAssistant:
         except Exception as e:
             print(f"Error analyzing job description: {e}")
 
+    def map_grid_points(self):
+        """Create a dense reference grid map with 100x100 subcells within A1-J10 grid"""
+        try:
+            self.widget.update_status("Creating dense reference grid map...")
+            
+            # Take initial screenshot for reference
+            screenshot = pyautogui.screenshot()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Get dimensions and scale factor
+            height, width = screenshot.height, screenshot.width
+            scale_factor = self.app.primaryScreen().devicePixelRatio()
+            
+            # Create mapping results
+            mapping_results = {
+                'screen_info': {
+                    'width': width,
+                    'height': height,
+                    'scale_factor': scale_factor,
+                    'timestamp': timestamp,
+                    'main_grid_size': 10,
+                    'sub_grid_size': 10  # 10 subcells per main cell
+                },
+                'points': {}
+            }
+            
+            # Create black canvas for grid map
+            grid_map = np.zeros((height, width, 3), dtype=np.uint8)
+            
+            # Calculate main cell dimensions
+            main_cell_width = width // 10
+            main_cell_height = height // 10
+            
+            # Calculate sub-cell dimensions
+            sub_cell_width = main_cell_width // 10
+            sub_cell_height = main_cell_height // 10
+            
+            # Draw and label all grid points
+            for main_row in range(10):  # Main grid rows (1-10)
+                for main_col in range(10):  # Main grid columns (A-J)
+                    # Main cell coordinate
+                    main_coord = f"{chr(65 + main_col)}{main_row + 1}"
+                    
+                    # Calculate main cell boundaries
+                    main_x_start = main_col * main_cell_width
+                    main_y_start = main_row * main_cell_height
+                    
+                    # Draw main cell boundary
+                    cv2.rectangle(grid_map,
+                                (main_x_start, main_y_start),
+                                (main_x_start + main_cell_width, main_y_start + main_cell_height),
+                                (60, 60, 60), 2)
+                    
+                    # Add main coordinate label
+                    cv2.putText(grid_map, main_coord,
+                              (main_x_start + 10, main_y_start + 20),
+                              cv2.FONT_HERSHEY_SIMPLEX,
+                              0.5, (0, 255, 0), 2)
+                    
+                    # Create sub-grid within main cell
+                    for sub_row in range(10):
+                        for sub_col in range(10):
+                            # Calculate exact position
+                            x = main_x_start + (sub_col * sub_cell_width)
+                            y = main_y_start + (sub_row * sub_cell_height)
+                            
+                            # Generate detailed coordinate
+                            sub_coord = f"{main_coord}.{sub_col}{sub_row}"
+                            
+                            # Store point data
+                            mapping_results['points'][sub_coord] = {
+                                'position': {'x': x, 'y': y},
+                                'main_cell': main_coord,
+                                'sub_position': {'col': sub_col, 'row': sub_row}
+                            }
+                            
+                            # Draw reference point
+                            cv2.circle(grid_map, (x, y), 1, (0, 255, 0), -1)
+                            
+                            # Add sub-coordinate label (every 2nd point to avoid overcrowding)
+                            if sub_col % 2 == 0 and sub_row % 2 == 0:
+                                cv2.putText(grid_map, f"{sub_col}{sub_row}",
+                                          (x + 2, y + 2),
+                                          cv2.FONT_HERSHEY_SIMPLEX,
+                                          0.3, (0, 255, 0), 1)
+            
+            # Add grid lines and labels
+            enhanced_map = self._enhance_dense_grid_map_with_labels(grid_map, width, height, 
+                                                                      main_cell_width, main_cell_height,
+                                                                      sub_cell_width, sub_cell_height)
+            
+            # Save mapping results
+            mapping_file = os.path.join(
+                self.screenshots_dir,
+                f"dense_grid_mapper_{timestamp}.json"
+            )
+            with open(mapping_file, 'w') as f:
+                json.dump(mapping_results, f, indent=2)
+            
+            # Save the grid map
+            map_file = os.path.join(
+                self.screenshots_dir,
+                f"dense_grid_mapper_visualization_{timestamp}.png"
+            )
+            cv2.imwrite(map_file, enhanced_map)
+            
+            # Generate summary
+            summary = f"""
+            Dense Reference Grid Map Complete:
+            - Screen Resolution: {width}x{height}
+            - Scale Factor: {scale_factor}
+            - Main Grid: A1-J10
+            - Sub-grid: 10x10 within each main cell
+            - Total Cells: 100x100
+            - Main Cell Size: {main_cell_width}x{main_cell_height} pixels
+            - Sub-cell Size: {sub_cell_width}x{sub_cell_height} pixels
+            - Results saved to: {mapping_file}
+            - Visualization: {map_file}
+            
+            Coordinate Format:
+            - Main Grid: A1-J10
+            - Sub-grid: A1.45 = Cell A1, sub-pos (4,5)
+            """
+            
+            self.widget.update_insights(summary)
+            self.widget.update_status("Dense reference grid map complete!")
+            
+            return mapping_results
+            
+        except Exception as e:
+            self.widget.update_status(f"Error during mapping: {str(e)}")
+            print(f"Error during grid mapping: {e}")
+            return None
+
+    def _enhance_dense_grid_map_with_labels(self, grid_map, width, height, 
+                                          main_cell_width, main_cell_height,
+                                          sub_cell_width, sub_cell_height):
+        """Add clear labels and legend to the dense grid map"""
+        # Create a larger canvas to accommodate labels
+        margin = 50
+        canvas = np.zeros((height + 2*margin, width + 2*margin, 3), dtype=np.uint8)
+        
+        # Copy the grid map to the center of the canvas
+        canvas[margin:margin+height, margin:margin+width] = grid_map
+        
+        # Add labels
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.8
+        
+        # Column labels (A-J)
+        for i in range(10):
+            label = chr(65 + i)
+            x = margin + i * main_cell_width + (main_cell_width // 2)
+            # Top labels
+            cv2.putText(canvas, label, (x-10, margin-10), font, font_scale, (255, 255, 255), 2)
+            # Bottom labels
+            cv2.putText(canvas, label, (x-10, margin+height+30), font, font_scale, (255, 255, 255), 2)
+        
+        # Row labels (1-10)
+        for i in range(10):
+            label = str(i + 1)
+            y = margin + i * main_cell_height + (main_cell_height // 2)
+            # Left labels
+            cv2.putText(canvas, label, (margin-30, y+10), font, font_scale, (255, 255, 255), 2)
+            # Right labels
+            cv2.putText(canvas, label, (margin+width+10, y+10), font, font_scale, (255, 255, 255), 2)
+        
+        # Add legend
+        legend_y = margin + height + 60
+        cv2.putText(canvas, "Dense Reference Grid Map (100x100)", (margin, legend_y), font, 1.0, (255, 255, 255), 2)
+        cv2.putText(canvas, "Main Grid: A1-J10", (margin, legend_y + 30), font, font_scale, (255, 255, 255), 1)
+        cv2.putText(canvas, "Sub-grid: 00-99 per cell", (margin + 300, legend_y + 30), font, font_scale, (255, 255, 255), 1)
+        cv2.putText(canvas, "Format: A1.45 = Cell A1, sub-pos (4,5)", (margin + 600, legend_y + 30), font, font_scale, (0, 255, 0), 1)
+        
+        return canvas
+
+    def _create_grid_overlay(self, img, screen_width_pixels, screen_height_pixels):
+        """Create a consistent grid overlay on the image"""
+        height, width = img.shape[:2]
+        
+        # Calculate cell dimensions - 40x40 grid
+        main_cell_width = width // 40
+        main_cell_height = height // 40
+        
+        # Create overlay
+        overlay = img.copy()
+        
+        # Define colors (BGR format)
+        GRID_COLOR = (0, 165, 255)  # Bright orange (BGR format) - very recognizable by AI
+        
+        # Draw main grid with thicker lines
+        for i in range(41):  # 41 lines for 40 cells
+            x = i * main_cell_width
+            cv2.line(overlay, (x, 0), (x, height), GRID_COLOR, 1)  # Thinner lines for less visual noise
+            
+        for i in range(41):  # 41 lines for 40 cells
+            y = i * main_cell_height
+            cv2.line(overlay, (0, y), (width, y), GRID_COLOR, 1)  # Thinner lines for less visual noise
+        
+        # Draw main grid labels with larger text
+        for main_row in range(40):
+            for main_col in range(40):
+                # Calculate column letters using base-26 system
+                first_letter = chr(65 + (main_col // 26))
+                second_letter = chr(65 + (main_col % 26))
+                main_coord = f"{first_letter}{second_letter}{main_row + 1}"
+                
+                # Calculate main cell boundaries
+                main_x_start = main_col * main_cell_width
+                main_y_start = main_row * main_cell_height
+                
+                # Calculate center of cell for label
+                label_x = main_x_start + (main_cell_width // 2)  # Center horizontally
+                label_y = main_y_start + (main_cell_height // 2)  # Center vertically
+                
+                # Draw white outline for better visibility (much thicker)
+                cv2.putText(overlay, main_coord,
+                          (label_x - 25, label_y),  # Offset for centering text
+                          cv2.FONT_HERSHEY_SIMPLEX,
+                          0.7,  # Much larger font size
+                          (255, 255, 255),
+                          6)  # Very thick outline
+                
+                # Draw orange text (thicker)
+                cv2.putText(overlay, main_coord,
+                          (label_x - 25, label_y),  # Offset for centering text
+                          cv2.FONT_HERSHEY_SIMPLEX,
+                          0.7,  # Much larger font size
+                          GRID_COLOR,
+                          2)  # Thicker text
+                
+                # Draw center dot for reference (larger and more visible)
+                center_x = main_x_start + (main_cell_width // 2)
+                center_y = main_y_start + (main_cell_height // 2)
+                cv2.circle(overlay, (center_x, center_y), 4, GRID_COLOR, -1)  # Larger dot
+        
+        # Blend overlay with original image
+        alpha = 0.4  # More transparent for better visibility of underlying form
+        cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, overlay)
+        
+        # Add legend with larger text
+        legend_height = 80
+        legend = np.zeros((legend_height, width, 3), dtype=np.uint8)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        
+        # Add legend text with larger font
+        def add_legend_text(text, pos_x, pos_y):
+            cv2.putText(legend, text, (pos_x, pos_y), font, 1.2, (255, 255, 255), 6)  # Much thicker white outline
+            cv2.putText(legend, text, (pos_x, pos_y), font, 1.2, GRID_COLOR, 2)  # Thicker text
+        
+        add_legend_text(f"Grid Reference - Screen: {screen_width_pixels}x{screen_height_pixels} px", 10, 35)
+        add_legend_text("Main Grid: AA1-ZZ40 (40x40 grid)", 10, 70)
+        
+        # Combine image with legend
+        img_with_legend = np.vstack([overlay, legend])
+        
+        return img_with_legend
+
     def on_press(self, key):
         """Handle key press"""
         try:
@@ -799,6 +1421,12 @@ class JobApplicationAssistant:
                   keyboard.Key.shift in self.current_keys and 
                   'j' in self.current_keys):
                 self.on_analyze_job()
+            
+            # Check for Ctrl+Shift+M (New mapping hotkey)
+            elif (keyboard.Key.ctrl_l in self.current_keys and 
+                  keyboard.Key.shift in self.current_keys and 
+                  'm' in self.current_keys):
+                self.map_grid_points()
             
             # Check for Ctrl+Q
             elif (keyboard.Key.ctrl_l in self.current_keys and 
